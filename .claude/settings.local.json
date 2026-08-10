@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(docker --version)",
+      "PowerShell(docker compose version)",
+      "Bash(/tmp/ur_venv/Scripts/python -m pip list)",
+      "Bash(/tmp/ur_venv/Scripts/python -m pip install -q httpx)",
+      "Bash(python3 -c ' *)",
+      "Bash(node --check /tmp/proto_script.js)",
+      "Bash(python -c ' *)",
+      "Bash(node --check 'C:\\\\Users\\\\yijun\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-yijun-Projects-urban-renewal-system\\\\96cad2d9-e270-489b-8513-03d5b09cec82\\\\scratchpad/proto_script.js')",
+      "Bash(python -)",
+      "Bash(python -m py_compile database.py main.py)",
+      "Bash(/tmp/ur_venv/Scripts/python smoke_test.py)",
+      "Bash(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=6 A897@192.168.0.20 \"echo SSH_OK\")",
+      "Bash(\"backend/.venv/Scripts/python.exe\" --version)",
+      "Bash(\"backend/.venv/Scripts/python.exe\" -c \"import sqlalchemy, fastapi, pydantic_settings, jwt, passlib, dotenv; print\\('all core deps import OK'\\)\")",
+      "Bash(mkdir -p \"c:\\\\Users\\\\yijun\\\\Projects\\\\urban-renewal-system\\\\.vscode\")",
+      "PowerShell(Get-CimInstance Win32_Processor)",
+      "PowerShell(wsl --status 2>&1)",
+      "PowerShell(Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-CimInstance -ClassName Win32_ComputerSystem)",
+      "PowerShell(Get-CimInstance -ClassName Win32_BIOS)",
+      "Bash(docker --version)",
+      "Bash(docker info *)",
+      "Bash(powershell.exe -Command \"Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue\")",
+      "PowerShell(wsl --version 2>&1)",
+      "PowerShell(wsl -l -v 2>&1)",
+      "PowerShell(bcdedit /enum {current})",
+      "PowerShell(Get-CimInstance Win32_BIOS)",
+      "WebSearch",
+      "Bash(docker compose *)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\yijun\\Projects\\urban-renewal-system"
+    ]
+  }
+}

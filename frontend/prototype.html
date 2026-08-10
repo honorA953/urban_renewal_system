@@ -1,0 +1,1710 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>都更管理系統</title>
+<style>
+  :root {
+    --brand: #42cbd0;
+    --brand-dark: #2ea6ab;
+    --bg: #f4f7f8;
+    --surface: #ffffff;
+    --border: #e2e8ea;
+    --text: #1f2d2f;
+    --text-muted: #6b7b7d;
+    --danger: #e05c5c;
+    --warning: #e0a83c;
+    --success: #3fae6a;
+    --radius: 10px;
+    --shadow: 0 2px 8px rgba(20, 40, 42, 0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .hidden { display: none !important; }
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 14px;
+    transition: opacity .15s;
+  }
+  button:hover { opacity: 0.88; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: var(--brand); color: #fff; font-weight: 600; }
+  .btn-secondary { background: #fff; color: var(--text); border: 1px solid var(--border); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-warning { background: var(--warning); color: #fff; }
+  .btn-sm { padding: 5px 10px; font-size: 12.5px; }
+  .btn-link { background: none; color: var(--brand-dark); padding: 2px 4px; text-decoration: underline; }
+  input, select, textarea {
+    font-family: inherit;
+    font-size: 14px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 100%;
+    background: #fff;
+    color: var(--text);
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
+  label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 4px; font-weight: 600; }
+  .field { margin-bottom: 14px; }
+  .field-row { display: flex; gap: 12px; }
+  .field-row > .field { flex: 1; }
+
+  /* ---------- Login ---------- */
+  #view-login {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #eafcfc 0%, var(--bg) 60%);
+  }
+  .login-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 40px 36px;
+    width: 340px;
+  }
+  .login-card h1 {
+    font-size: 20px;
+    text-align: center;
+    margin: 0 0 4px;
+  }
+  .login-card .subtitle {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .login-brand-dot {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: var(--brand);
+    margin: 0 auto 14px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 18px;
+  }
+
+  /* ---------- App shell ---------- */
+  #app { min-height: 100vh; display: flex; flex-direction: column; }
+  .navbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    height: 58px;
+    gap: 24px;
+  }
+  .navbar .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
+  .navbar .brand-dot { width: 26px; height: 26px; border-radius: 7px; background: var(--brand); }
+  .nav-links { display: flex; gap: 4px; flex: 1; }
+  .nav-link {
+    background: none; color: var(--text-muted); font-weight: 600; padding: 8px 14px; border-radius: 8px;
+  }
+  .nav-link.active { background: #e6f9fa; color: var(--brand-dark); }
+  .nav-user { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-muted); }
+  .role-badge {
+    font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 100px;
+    background: #eef2f2; color: var(--text-muted);
+  }
+  .role-badge.admin { background: #fdeee0; color: #b5651d; }
+  .role-badge.staff { background: #e6f9fa; color: var(--brand-dark); }
+  .role-badge.public { background: #eef1fb; color: #4d5fb0; }
+
+  main { flex: 1; padding: 24px; max-width: 1200px; margin: 0 auto; width: 100%; }
+
+  /* ---------- Dashboard ---------- */
+  .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+  .page-header h2 { margin: 0; font-size: 20px; }
+  .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 18px; border: 1px solid var(--border);
+  }
+  .project-card { cursor: pointer; display: flex; flex-direction: column; gap: 10px; }
+  .project-card:hover { border-color: var(--brand); }
+  .project-card-top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .project-card h3 { margin: 0 0 2px; font-size: 15px; }
+  .project-code { font-size: 12px; color: var(--text-muted); }
+  .status-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 100px; }
+  .status-active { background: #e6f9ef; color: var(--success); }
+  .status-closed { background: #eef0f0; color: var(--text-muted); }
+  .status-suspended { background: #fdf2df; color: var(--warning); }
+  .progress-bar-track { background: #eef2f2; border-radius: 100px; height: 8px; overflow: hidden; }
+  .progress-bar-fill { background: var(--brand); height: 100%; border-radius: 100px; transition: width .3s; }
+  .card-meta-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); }
+  .badge-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .mini-badge { font-size: 11px; padding: 2px 8px; border-radius: 100px; background: #f2f5f5; color: var(--text-muted); }
+  .mini-badge.alert { background: #fdeaea; color: var(--danger); font-weight: 700; }
+  .mini-badge.gate-ok { background: #e6f9ef; color: var(--success); font-weight: 700; }
+  .empty-state { text-align: center; color: var(--text-muted); padding: 60px 20px; }
+
+  /* ---------- Project detail ---------- */
+  .back-link { background: none; color: var(--text-muted); font-weight: 600; padding: 4px 0; margin-bottom: 10px; }
+  .project-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+  .project-header h2 { margin: 0 0 4px; }
+  .project-header .sub { color: var(--text-muted); font-size: 13px; }
+  .tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 18px; flex-wrap: wrap; }
+  .tab-btn {
+    background: none; color: var(--text-muted); font-weight: 600; padding: 10px 16px;
+    border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent;
+  }
+  .tab-btn.active { color: var(--brand-dark); border-bottom-color: var(--brand); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: var(--radius); overflow: hidden; }
+  thead th {
+    text-align: left; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em;
+    padding: 10px 12px; border-bottom: 1px solid var(--border); background: #fafcfc;
+  }
+  tbody td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13.5px; vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  .table-wrap { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid var(--border); overflow-x: auto; }
+  .actions-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+  .contact-status-badge, .consent-status-badge {
+    font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 100px; display: inline-block;
+  }
+  .cs-not_contacted { background: #f2f5f5; color: var(--text-muted); }
+  .cs-contacted { background: #eef1fb; color: #4d5fb0; }
+  .cs-declined { background: #fdeaea; color: var(--danger); }
+  .cs-agreed, .cs-completed { background: #e6f9ef; color: var(--success); }
+  .cs-pending { background: #f2f5f5; color: var(--text-muted); }
+  .cs-opposed { background: #fdeaea; color: var(--danger); }
+  .sub-detail { background: #fafcfc; padding: 10px 12px; border-radius: 8px; margin-top: 6px; font-size: 12.5px; color: var(--text-muted); }
+  .sub-detail table { box-shadow: none; }
+
+  .section-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
+  .section-toolbar h3 { margin: 0; font-size: 15px; }
+
+  /* ---------- SOP stepper ---------- */
+  .sop-stepper { display: flex; flex-wrap: wrap; gap: 0; margin-bottom: 22px; }
+  .sop-node { display: flex; flex-direction: column; align-items: center; width: 96px; position: relative; }
+  .sop-node .circle {
+    width: 34px; height: 34px; border-radius: 50%; background: #eef2f2; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;
+    border: 2px solid #eef2f2; z-index: 1;
+  }
+  .sop-node .line {
+    position: absolute; top: 17px; left: -48px; width: 96px; height: 2px; background: #eef2f2; z-index: 0;
+  }
+  .sop-node:first-child .line { display: none; }
+  .sop-node .label { font-size: 10.5px; text-align: center; margin-top: 6px; color: var(--text-muted); line-height: 1.3; }
+  .sop-node.completed .circle { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .sop-node.completed .line { background: var(--brand); }
+  .sop-node.force_closed .circle { background: var(--warning); border-color: var(--warning); color: #fff; }
+  .sop-node.force_closed .line { background: var(--warning); }
+  .sop-node.current .circle { border-color: var(--brand); color: var(--brand-dark); box-shadow: 0 0 0 4px #e6f9fa; }
+  .sop-node.current .label { color: var(--text); font-weight: 700; }
+
+  .gate-bars { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
+  .gate-bar-label { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 4px; }
+  .final-banner {
+    padding: 14px 16px; border-radius: var(--radius); background: #e6f9ef; color: var(--success);
+    font-weight: 700; margin-bottom: 16px;
+  }
+  .final-banner.warning { background: #fdf2df; color: var(--warning); }
+
+  /* ---------- Modal ---------- */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(15, 25, 26, .45);
+    display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px;
+  }
+  .modal-dialog {
+    background: #fff; border-radius: var(--radius); width: 100%; max-height: 88vh; overflow-y: auto;
+    box-shadow: 0 12px 40px rgba(0,0,0,.2);
+  }
+  .modal-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+  }
+  .modal-header h3 { margin: 0; font-size: 16px; }
+  .modal-close { background: none; color: var(--text-muted); font-size: 20px; padding: 0 4px; }
+  .modal-body { padding: 20px; }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+
+  /* ---------- Toast ---------- */
+  #toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 200; }
+  .toast {
+    background: var(--text); color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 13.5px;
+    opacity: 0; transform: translateY(8px); transition: all .25s; max-width: 320px; box-shadow: var(--shadow);
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast-error { background: var(--danger); }
+  .toast-success { background: var(--success); }
+
+  .helper-text { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .divider { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 0 0 14px; }
+  legend { font-size: 12.5px; font-weight: 700; color: var(--text-muted); padding: 0 6px; }
+</style>
+</head>
+<body>
+
+<div id="toast-container"></div>
+<div id="modal-root"></div>
+
+<!-- ============ LOGIN ============ -->
+<div id="view-login">
+  <div class="login-card">
+    <div class="login-brand-dot">都</div>
+    <h1>都更管理系統</h1>
+    <div class="subtitle">請登入以繼續</div>
+    <form id="login-form">
+      <div class="field">
+        <label>帳號</label>
+        <input type="text" id="login-username" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label>密碼</label>
+        <input type="password" id="login-password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn-primary" style="width:100%">登入</button>
+    </form>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" class="hidden">
+  <div class="navbar">
+    <div class="brand"><div class="brand-dot"></div>都更管理系統</div>
+    <div class="nav-links">
+      <button class="nav-link" data-nav="dashboard">儀表板</button>
+      <button class="nav-link hidden" data-nav="users" id="nav-users-btn">使用者管理</button>
+    </div>
+    <div class="nav-user">
+      <span id="nav-user-name"></span>
+      <span class="role-badge" id="nav-user-role"></span>
+      <button class="btn-secondary btn-sm" id="logout-btn">登出</button>
+    </div>
+  </div>
+
+  <main>
+    <!-- Dashboard -->
+    <div id="view-dashboard">
+      <div class="page-header">
+        <h2>案件儀表板</h2>
+        <button class="btn-primary hidden" id="new-project-btn">+ 新增案件</button>
+      </div>
+      <div id="project-grid" class="project-grid"></div>
+    </div>
+
+    <!-- Project detail -->
+    <div id="view-project-detail" class="hidden">
+      <button class="back-link" id="back-to-dashboard">← 返回儀表板</button>
+      <div class="project-header">
+        <div>
+          <h2 id="pd-name"></h2>
+          <div class="sub" id="pd-sub"></div>
+        </div>
+        <div id="pd-status-badge"></div>
+      </div>
+      <div class="tab-bar">
+        <button class="tab-btn" data-tab="landowners">地主</button>
+        <button class="tab-btn" data-tab="sop">SOP 進度</button>
+        <button class="tab-btn" data-tab="contacts">聯絡紀錄</button>
+        <button class="tab-btn" data-tab="documents">文件</button>
+        <button class="tab-btn" data-tab="expenses">費用</button>
+      </div>
+      <div id="tab-content"></div>
+    </div>
+
+    <!-- Users -->
+    <div id="view-users" class="hidden">
+      <div class="page-header">
+        <h2>使用者管理</h2>
+        <button class="btn-primary" id="new-user-btn">+ 新增使用者</button>
+      </div>
+      <div id="users-table-wrap" class="table-wrap"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+const API_BASE = "/api";
+
+const state = {
+  token: sessionStorage.getItem("token") || null,
+  user: null,
+  currentProjectId: null,
+  currentProject: null,
+  activeTab: "landowners",
+  projectCache: {},
+};
+
+/* ================= API helper ================= */
+
+async function api(path, { method = "GET", body, isForm = false, params, silent = false } = {}) {
+  let url = API_BASE + path;
+  if (params) {
+    const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "");
+    if (entries.length) url += "?" + new URLSearchParams(entries).toString();
+  }
+  const headers = {};
+  if (state.token) headers["Authorization"] = "Bearer " + state.token;
+  let fetchBody;
+  if (isForm) {
+    fetchBody = body;
+  } else if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    fetchBody = JSON.stringify(body);
+  }
+
+  let res;
+  try {
+    res = await fetch(url, { method, headers, body: fetchBody });
+  } catch (err) {
+    toast("無法連線到伺服器", "error");
+    throw err;
+  }
+
+  if (res.status === 401) {
+    toast("登入已逾期,請重新登入", "error");
+    doLogout();
+    throw new Error("unauthorized");
+  }
+
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const data = await res.json();
+      detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data);
+    } catch (e) {}
+    if (!silent) toast(detail, "error");
+    throw new Error(detail);
+  }
+
+  if (res.status === 204) return null;
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return res.json();
+  return res;
+}
+
+/* ================= Toast ================= */
+
+function toast(message, type = "info") {
+  const container = document.getElementById("toast-container");
+  const el = document.createElement("div");
+  el.className = `toast toast-${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
+  }, 3500);
+}
+
+/* ================= Modal ================= */
+
+function openModal(title, bodyHtml, { width = "480px" } = {}) {
+  const root = document.getElementById("modal-root");
+  root.innerHTML = `
+    <div class="modal-overlay" id="modal-overlay">
+      <div class="modal-dialog" style="max-width:${width}">
+        <div class="modal-header">
+          <h3>${title}</h3>
+          <button class="modal-close" id="modal-close-btn" type="button">&times;</button>
+        </div>
+        <div class="modal-body">${bodyHtml}</div>
+      </div>
+    </div>`;
+  root.querySelector("#modal-close-btn").onclick = closeModal;
+  root.querySelector("#modal-overlay").onclick = (e) => {
+    if (e.target.id === "modal-overlay") closeModal();
+  };
+  return root;
+}
+
+function closeModal() {
+  document.getElementById("modal-root").innerHTML = "";
+}
+
+/* ================= Formatting helpers ================= */
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString("zh-TW", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtDate(iso) {
+  if (!iso) return "-";
+  return String(iso).slice(0, 10);
+}
+
+function fmtPct(ratio) {
+  return (ratio * 100).toFixed(1) + "%";
+}
+
+function fmtMoney(n) {
+  return Number(n).toLocaleString("zh-TW", { maximumFractionDigits: 0 });
+}
+
+const CONTACT_STATUS_LABEL = { not_contacted: "未聯絡", contacted: "已聯絡", declined: "婉拒", agreed: "同意" };
+const CONSENT_STATUS_LABEL = { pending: "待確認", agreed: "同意", opposed: "反對" };
+const PROJECT_STATUS_LABEL = { active: "進行中", closed: "已結案", suspended: "暫停" };
+const DOC_TYPE_LABEL = {
+  property_register: "土地登記謄本", consent_form: "同意書", briefing_material: "說明會資料",
+  contract: "合約", photo: "照片", other: "其他",
+};
+const CONTACT_METHOD_LABEL = { phone: "電話", visit: "訪視", mail: "郵寄", email: "電子郵件", briefing: "說明會", other: "其他" };
+const CONTACT_RESULT_LABEL = { no_answer: "未接聽", agreed: "同意", opposed: "反對", undecided: "未決定", callback_needed: "需回電" };
+
+function isEditor() {
+  return state.user && (state.user.role === "admin" || state.user.role === "staff");
+}
+function isAdmin() {
+  return state.user && state.user.role === "admin";
+}
+
+/* ================= Auth ================= */
+
+async function doLogin(username, password) {
+  const data = await api("/auth/login", { method: "POST", body: { username, password } });
+  state.token = data.access_token;
+  sessionStorage.setItem("token", state.token);
+  await loadCurrentUser();
+}
+
+async function loadCurrentUser() {
+  const user = await api("/auth/me");
+  state.user = user;
+  renderNavUser();
+  showApp();
+  goToDashboard();
+}
+
+function doLogout() {
+  state.token = null;
+  state.user = null;
+  state.currentProjectId = null;
+  state.projectCache = {};
+  sessionStorage.removeItem("token");
+  document.getElementById("app").classList.add("hidden");
+  document.getElementById("view-login").classList.remove("hidden");
+}
+
+function showApp() {
+  document.getElementById("view-login").classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
+  document.getElementById("nav-users-btn").classList.toggle("hidden", !isAdmin());
+  document.getElementById("new-project-btn").classList.toggle("hidden", !isEditor());
+}
+
+function renderNavUser() {
+  document.getElementById("nav-user-name").textContent = state.user.display_name;
+  const roleLabel = { admin: "主管", staff: "開發人員", public: "地主" }[state.user.role] || state.user.role;
+  const badge = document.getElementById("nav-user-role");
+  badge.textContent = roleLabel;
+  badge.className = "role-badge " + state.user.role;
+}
+
+document.getElementById("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("login-username").value.trim();
+  const password = document.getElementById("login-password").value;
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  try {
+    await doLogin(username, password);
+  } catch (err) {
+    /* toast already shown by api() */
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("logout-btn").addEventListener("click", doLogout);
+
+/* ================= Nav ================= */
+
+document.querySelectorAll(".nav-link").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const target = btn.dataset.nav;
+    if (target === "dashboard") goToDashboard();
+    if (target === "users") goToUsers();
+  });
+});
+
+function setActiveNav(name) {
+  document.querySelectorAll(".nav-link").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
+}
+
+function showView(id) {
+  ["view-dashboard", "view-project-detail", "view-users"].forEach((v) => {
+    document.getElementById(v).classList.toggle("hidden", v !== id);
+  });
+}
+
+/* ================= Dashboard ================= */
+
+async function goToDashboard() {
+  setActiveNav("dashboard");
+  showView("view-dashboard");
+  await loadDashboard();
+}
+
+async function loadDashboard() {
+  const grid = document.getElementById("project-grid");
+  grid.innerHTML = `<div class="empty-state">載入中...</div>`;
+  let projects;
+  try {
+    projects = await api("/projects");
+  } catch (e) {
+    grid.innerHTML = `<div class="empty-state">載入失敗</div>`;
+    return;
+  }
+
+  if (!projects.length) {
+    grid.innerHTML = `<div class="empty-state">目前沒有可查看的案件</div>`;
+    return;
+  }
+
+  const enriched = await Promise.all(
+    projects.map(async (p) => {
+      let ratio = null;
+      let alerts = [];
+      try {
+        ratio = await api(`/projects/${p.id}/consent-ratio`, { silent: true });
+      } catch (e) {}
+      try {
+        alerts = await api(`/projects/${p.id}/alerts`, { silent: true });
+      } catch (e) {}
+      return { p, ratio, alerts };
+    })
+  );
+
+  grid.innerHTML = enriched
+    .map(({ p, ratio, alerts }) => {
+      const pct = Math.round((p.current_stage / 9) * 100);
+      const gateBadge =
+        ratio && ratio.headcount_total > 0
+          ? `<span class="mini-badge ${ratio.dual_gate_passed ? "gate-ok" : ""}">同意度 人數${fmtPct(ratio.headcount_ratio)} / 面積${fmtPct(ratio.land_share_ratio)}</span>`
+          : "";
+      const alertBadge = alerts.length ? `<span class="mini-badge alert">⚠ ${alerts.length} 位待跟進</span>` : "";
+      return `
+        <div class="card project-card" data-project-id="${p.id}">
+          <div class="project-card-top">
+            <div>
+              <h3>${escapeHtml(p.name)}</h3>
+              <div class="project-code">${escapeHtml(p.project_code)}${p.district ? " · " + escapeHtml(p.district) : ""}</div>
+            </div>
+            <span class="status-badge status-${p.status}">${PROJECT_STATUS_LABEL[p.status] || p.status}</span>
+          </div>
+          <div>
+            <div class="card-meta-row"><span>SOP 進度</span><span>第 ${p.current_stage} / 9 關</span></div>
+            <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+          </div>
+          <div class="badge-row">${gateBadge}${alertBadge}</div>
+        </div>`;
+    })
+    .join("");
+
+  grid.querySelectorAll(".project-card").forEach((card) => {
+    card.addEventListener("click", () => openProject(Number(card.dataset.projectId)));
+  });
+}
+
+document.getElementById("new-project-btn").addEventListener("click", () => {
+  openModal(
+    "新增案件",
+    `
+    <form id="project-form">
+      <div class="field-row">
+        <div class="field"><label>案件代碼</label><input name="project_code" required></div>
+        <div class="field"><label>案件名稱</label><input name="name" required></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>行政區</label><input name="district"></div>
+        <div class="field"><label>地址</label><input name="address"></div>
+      </div>
+      <div class="field"><label>備註</label><textarea name="description" rows="3"></textarea></div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-primary">建立</button>
+      </div>
+    </form>`
+  );
+  document.getElementById("project-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    try {
+      const project = await api("/projects", { method: "POST", body: payload });
+      closeModal();
+      toast("案件已建立", "success");
+      await loadDashboard();
+      openProject(project.id);
+    } catch (err) {}
+  });
+});
+
+document.getElementById("back-to-dashboard").addEventListener("click", goToDashboard);
+
+/* ================= Project detail ================= */
+
+async function openProject(id) {
+  state.currentProjectId = id;
+  state.projectCache[id] = state.projectCache[id] || {};
+  setActiveNav("");
+  showView("view-project-detail");
+
+  try {
+    const project = await api(`/projects/${id}`);
+    state.currentProject = project;
+    renderProjectHeader(project);
+  } catch (e) {
+    goToDashboard();
+    return;
+  }
+
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tab === "landowners");
+  });
+  state.activeTab = "landowners";
+  await renderTab("landowners");
+}
+
+function renderProjectHeader(p) {
+  document.getElementById("pd-name").textContent = `${p.name} (${p.project_code})`;
+  document.getElementById("pd-sub").textContent = [p.district, p.address].filter(Boolean).join(" · ") || "—";
+  document.getElementById("pd-status-badge").innerHTML =
+    `<span class="status-badge status-${p.status}">${PROJECT_STATUS_LABEL[p.status] || p.status}</span>` +
+    (p.is_force_closed ? ` <span class="mini-badge alert">強制結案</span>` : "");
+}
+
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
+    state.activeTab = btn.dataset.tab;
+    await renderTab(btn.dataset.tab);
+  });
+});
+
+async function renderTab(tab) {
+  const el = document.getElementById("tab-content");
+  el.innerHTML = `<div class="empty-state">載入中...</div>`;
+  const renderers = {
+    landowners: renderLandownersTab,
+    sop: renderSopTab,
+    contacts: renderContactsTab,
+    documents: renderDocumentsTab,
+    expenses: renderExpensesTab,
+  };
+  try {
+    await renderers[tab](el);
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state">載入失敗</div>`;
+  }
+}
+
+/* ================= Tab: Landowners ================= */
+
+async function renderLandownersTab(el) {
+  const pid = state.currentProjectId;
+  const landowners = await api(`/projects/${pid}/landowners`);
+  state.projectCache[pid].landowners = landowners;
+
+  el.innerHTML = `
+    <div class="section-toolbar">
+      <h3>地主清冊 (${landowners.length})</h3>
+      ${isEditor() ? `<button class="btn-primary btn-sm" id="add-landowner-btn">+ 新增地主</button>` : ""}
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>姓名</th><th>身分證字號</th><th>電話</th><th>聯絡狀態</th><th>代表人</th><th>土地/建物</th>
+          ${isEditor() ? "<th>操作</th>" : ""}
+        </tr></thead>
+        <tbody>
+          ${landowners
+            .map(
+              (o) => `
+            <tr>
+              <td>${escapeHtml(o.name)}</td>
+              <td>${escapeHtml(o.id_number) || "-"}</td>
+              <td>${escapeHtml(o.phone) || "-"}</td>
+              <td><span class="contact-status-badge cs-${o.contact_status}">${CONTACT_STATUS_LABEL[o.contact_status]}</span></td>
+              <td>${o.is_representative ? "是" : "-"}</td>
+              <td>${o.land_records.length} 筆土地 / ${o.building_records.length} 筆建物
+                ${
+                  o.land_records.length || o.building_records.length
+                    ? `<div><button class="btn-link btn-sm" data-detail="${o.id}">查看明細</button></div>`
+                    : ""
+                }
+              </td>
+              ${
+                isEditor()
+                  ? `<td class="actions-cell">
+                      <button class="btn-secondary btn-sm" data-edit="${o.id}">編輯</button>
+                      <button class="btn-danger btn-sm" data-delete="${o.id}">刪除</button>
+                    </td>`
+                  : ""
+              }
+            </tr>
+            <tr class="detail-row hidden" id="detail-row-${o.id}"><td colspan="10">
+              <div class="sub-detail">
+                ${o.land_records.length ? `<strong>土地records</strong><br>` : ""}
+                ${o.land_records
+                  .map(
+                    (lr) =>
+                      `地號 ${escapeHtml(lr.parcel_number)}${lr.section ? " (" + escapeHtml(lr.section) + ")" : ""} · 面積 ${lr.total_area_sqm}m² · 持分 ${lr.ownership_numerator}/${lr.ownership_denominator} · 持有面積 ${lr.owned_area_sqm ?? "-"}m² (${lr.ownership_share_pct ?? "-"}%)`
+                  )
+                  .join("<br>")}
+                ${o.land_records.length && o.building_records.length ? "<br><br>" : ""}
+                ${o.building_records.length ? `<strong>建物 records</strong><br>` : ""}
+                ${o.building_records
+                  .map(
+                    (br) =>
+                      `${escapeHtml(br.building_number) || "建物"} · 總面積 ${br.total_area_sqm}m² · 持分 ${br.ownership_numerator}/${br.ownership_denominator} (${br.ownership_share_pct}%)`
+                  )
+                  .join("<br>")}
+              </div>
+            </td></tr>
+          `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  if (!landowners.length) {
+    el.querySelector(".table-wrap").outerHTML = `<div class="empty-state">尚無地主資料</div>`;
+  }
+
+  el.querySelectorAll("[data-detail]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.getElementById(`detail-row-${btn.dataset.detail}`).classList.toggle("hidden");
+    });
+  });
+  el.querySelectorAll("[data-edit]").forEach((btn) => {
+    btn.addEventListener("click", () => openEditLandownerModal(Number(btn.dataset.edit)));
+  });
+  el.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.addEventListener("click", () => deleteLandowner(Number(btn.dataset.delete)));
+  });
+  const addBtn = document.getElementById("add-landowner-btn");
+  if (addBtn) addBtn.addEventListener("click", openAddLandownerModal);
+}
+
+function openAddLandownerModal() {
+  openModal(
+    "新增地主",
+    `
+    <form id="landowner-form">
+      <div class="field-row">
+        <div class="field"><label>姓名</label><input name="name" required></div>
+        <div class="field"><label>身分證字號</label><input name="id_number"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>電話</label><input name="phone"></div>
+        <div class="field"><label>地址</label><input name="address"></div>
+      </div>
+      <label><input type="checkbox" name="is_representative" style="width:auto;display:inline-block;margin-right:6px"> 為土地/建物代表人</label>
+      <div class="field" style="margin-top:10px"><label>備註</label><textarea name="notes" rows="2"></textarea></div>
+      <fieldset>
+        <legend>土地資料(選填)</legend>
+        <div class="field-row">
+          <div class="field"><label>地號</label><input name="lr_parcel_number"></div>
+          <div class="field"><label>地段</label><input name="lr_section"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>總面積(m²)</label><input name="lr_total_area_sqm" type="number" step="0.01"></div>
+          <div class="field"><label>持分(分子/分母)</label>
+            <div style="display:flex;gap:6px">
+              <input name="lr_ownership_numerator" type="number" placeholder="分子" value="1">
+              <input name="lr_ownership_denominator" type="number" placeholder="分母" value="1">
+            </div>
+          </div>
+        </div>
+      </fieldset>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-primary">建立</button>
+      </div>
+    </form>`
+  );
+
+  document.getElementById("landowner-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const data = Object.fromEntries(fd.entries());
+    const payload = {
+      name: data.name,
+      id_number: data.id_number || null,
+      phone: data.phone || null,
+      address: data.address || null,
+      is_representative: fd.has("is_representative"),
+      notes: data.notes || null,
+      land_records: [],
+      building_records: [],
+    };
+    if (data.lr_parcel_number) {
+      payload.land_records.push({
+        parcel_number: data.lr_parcel_number,
+        section: data.lr_section || null,
+        total_area_sqm: Number(data.lr_total_area_sqm) || 0,
+        ownership_numerator: Number(data.lr_ownership_numerator) || 1,
+        ownership_denominator: Number(data.lr_ownership_denominator) || 1,
+      });
+    }
+    try {
+      await api(`/projects/${state.currentProjectId}/landowners`, { method: "POST", body: payload });
+      closeModal();
+      toast("地主已新增", "success");
+      renderTab("landowners");
+    } catch (err) {}
+  });
+}
+
+function openEditLandownerModal(landownerId) {
+  const owner = state.projectCache[state.currentProjectId].landowners.find((o) => o.id === landownerId);
+  if (!owner) return;
+  openModal(
+    "編輯地主",
+    `
+    <form id="landowner-edit-form">
+      <div class="field-row">
+        <div class="field"><label>姓名</label><input name="name" value="${escapeHtml(owner.name)}" required></div>
+        <div class="field"><label>身分證字號</label><input name="id_number" value="${escapeHtml(owner.id_number) || ""}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>電話</label><input name="phone" value="${escapeHtml(owner.phone) || ""}"></div>
+        <div class="field"><label>聯絡狀態</label>
+          <select name="contact_status">
+            ${Object.entries(CONTACT_STATUS_LABEL)
+              .map(([k, v]) => `<option value="${k}" ${owner.contact_status === k ? "selected" : ""}>${v}</option>`)
+              .join("")}
+          </select>
+        </div>
+      </div>
+      <div class="field"><label>地址</label><input name="address" value="${escapeHtml(owner.address) || ""}"></div>
+      <div class="field"><label>備註</label><textarea name="notes" rows="2">${escapeHtml(owner.notes) || ""}</textarea></div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-primary">儲存</button>
+      </div>
+    </form>`
+  );
+  document.getElementById("landowner-edit-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    try {
+      await api(`/projects/${state.currentProjectId}/landowners/${landownerId}`, { method: "PATCH", body: payload });
+      closeModal();
+      toast("已更新", "success");
+      renderTab("landowners");
+    } catch (err) {}
+  });
+}
+
+async function deleteLandowner(id) {
+  if (!confirm("確定要刪除此地主嗎?")) return;
+  try {
+    await api(`/projects/${state.currentProjectId}/landowners/${id}`, { method: "DELETE" });
+    toast("已刪除", "success");
+    renderTab("landowners");
+  } catch (err) {}
+}
+
+/* ================= Tab: SOP ================= */
+
+const DUAL_GATE_STAGES = [4, 8, 9];
+
+async function renderSopTab(el) {
+  const pid = state.currentProjectId;
+  const sop = await api(`/projects/${pid}/sop`);
+  state.projectCache[pid].sop = sop;
+
+  const stageKeys = Object.keys(sop.stages).sort((a, b) => Number(a) - Number(b));
+
+  let finalBanner = "";
+  if (sop.final.status === "completed") {
+    finalBanner = `<div class="final-banner">✓ 案件已 100% 同意結案${sop.final.closed_at ? "(" + fmtDateTime(sop.final.closed_at) + ")" : ""}</div>`;
+  } else if (sop.final.status === "force_closed") {
+    finalBanner = `<div class="final-banner warning">案件已由主管強制結案${sop.final.reason ? ":" + escapeHtml(sop.final.reason) : ""}</div>`;
+  }
+
+  const stepper = stageKeys
+    .map((key) => {
+      const stage = sop.stages[key];
+      const num = Number(key);
+      const cls = stage.status === "completed" ? "completed" : stage.status === "force_closed" ? "force_closed" : num === sop.current_stage ? "current" : "";
+      return `<div class="sop-node ${cls}"><div class="line"></div><div class="circle">${key}</div><div class="label">${escapeHtml(stage.name.split(":")[1] || stage.name)}</div></div>`;
+    })
+    .join("");
+
+  const currentStage = sop.stages[String(sop.current_stage)];
+  const isFinished = sop.final.status !== "pending";
+
+  let actionPanel = "";
+  if (!isFinished && currentStage) {
+    const isDualGate = DUAL_GATE_STAGES.includes(sop.current_stage);
+    actionPanel = `
+      <div class="card">
+        <h3 style="margin-top:0">目前關卡:${escapeHtml(currentStage.name)}</h3>
+        ${isDualGate ? `<div id="consent-panel"></div>` : ""}
+        ${
+          isEditor()
+            ? `<div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+                <button class="btn-primary" id="complete-stage-btn">完成本關卡</button>
+                ${isAdmin() ? `<button class="btn-warning" id="force-stage-btn">主管強制完成</button>` : ""}
+              </div>`
+            : ""
+        }
+      </div>`;
+  }
+
+  let forceCloseSection = "";
+  if (isAdmin() && !isFinished) {
+    forceCloseSection = `
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin-top:0">主管操作</h3>
+        <button class="btn-danger btn-sm" id="force-close-project-btn">強制結案</button>
+      </div>`;
+  }
+
+  el.innerHTML = `
+    ${finalBanner}
+    <div class="sop-stepper">${stepper}</div>
+    ${actionPanel}
+    ${forceCloseSection}
+  `;
+
+  if (currentStage && DUAL_GATE_STAGES.includes(sop.current_stage) && !isFinished) {
+    await renderConsentPanel(document.getElementById("consent-panel"), sop.current_stage);
+  }
+
+  const completeBtn = document.getElementById("complete-stage-btn");
+  if (completeBtn) {
+    completeBtn.addEventListener("click", async () => {
+      try {
+        await api(`/projects/${pid}/sop/${sop.current_stage}/complete`, { method: "POST", body: {} });
+        toast("關卡已完成", "success");
+        await loadDashboard();
+        renderTab("sop");
+      } catch (err) {}
+    });
+  }
+  const forceBtn = document.getElementById("force-stage-btn");
+  if (forceBtn) {
+    forceBtn.addEventListener("click", async () => {
+      const reason = prompt("請輸入強制完成原因:");
+      if (reason === null) return;
+      try {
+        await api(`/projects/${pid}/sop/${sop.current_stage}/complete`, { method: "POST", body: { force: true, reason } });
+        toast("已強制完成關卡", "success");
+        renderTab("sop");
+      } catch (err) {}
+    });
+  }
+  const forceCloseBtn = document.getElementById("force-close-project-btn");
+  if (forceCloseBtn) {
+    forceCloseBtn.addEventListener("click", async () => {
+      const reason = prompt("請輸入強制結案原因:");
+      if (reason === null) return;
+      try {
+        await api(`/projects/${pid}/sop/force-close`, { method: "POST", body: { force: true, reason } });
+        toast("案件已強制結案", "success");
+        await loadDashboard();
+        renderTab("sop");
+      } catch (err) {}
+    });
+  }
+}
+
+async function renderConsentPanel(el, stage) {
+  const pid = state.currentProjectId;
+  const [ratio, records, landowners] = await Promise.all([
+    api(`/projects/${pid}/consent-ratio`, { params: { stage } }),
+    api(`/projects/${pid}/sop/${stage}/consent`),
+    api(`/projects/${pid}/landowners`),
+  ]);
+  const recordByLandowner = Object.fromEntries(records.map((r) => [r.landowner_id, r]));
+
+  el.innerHTML = `
+    <div class="gate-bars">
+      <div>
+        <div class="gate-bar-label"><span>人數同意率</span><span>${fmtPct(ratio.headcount_ratio)} (${ratio.headcount_agreed}/${ratio.headcount_total})</span></div>
+        <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${Math.min(ratio.headcount_ratio * 100, 100)}%"></div></div>
+      </div>
+      <div>
+        <div class="gate-bar-label"><span>面積同意率</span><span>${fmtPct(ratio.land_share_ratio)} (${ratio.land_share_agreed_sqm.toFixed(1)}/${ratio.land_share_total_sqm.toFixed(1)} m²)</span></div>
+        <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${Math.min(ratio.land_share_ratio * 100, 100)}%"></div></div>
+      </div>
+      <div class="helper-text">需人數與面積同意率皆 ≥ 80% 才能通過雙門檻${ratio.dual_gate_passed ? " · <strong style='color:var(--success)'>已達標</strong>" : ""}</div>
+    </div>
+    ${
+      isEditor()
+        ? `<div class="table-wrap">
+            <table>
+              <thead><tr><th>地主</th><th>本輪同意狀態</th><th>操作</th></tr></thead>
+              <tbody>
+                ${landowners
+                  .map((o) => {
+                    const rec = recordByLandowner[o.id];
+                    const status = rec ? rec.consent_status : "pending";
+                    return `<tr>
+                      <td>${escapeHtml(o.name)}</td>
+                      <td><span class="consent-status-badge cs-${status}">${CONSENT_STATUS_LABEL[status]}</span></td>
+                      <td class="actions-cell">
+                        <button class="btn-secondary btn-sm" data-consent="${o.id}" data-status="agreed">同意</button>
+                        <button class="btn-secondary btn-sm" data-consent="${o.id}" data-status="opposed">反對</button>
+                      </td>
+                    </tr>`;
+                  })
+                  .join("")}
+              </tbody>
+            </table>
+          </div>`
+        : ""
+    }
+  `;
+
+  el.querySelectorAll("[data-consent]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await api(`/projects/${pid}/sop/${stage}/consent`, {
+          method: "POST",
+          body: { landowner_id: Number(btn.dataset.consent), consent_status: btn.dataset.status },
+        });
+        toast("已登記同意狀態", "success");
+        renderTab("sop");
+      } catch (err) {}
+    });
+  });
+}
+
+/* ================= Tab: Contacts ================= */
+
+async function renderContactsTab(el) {
+  const pid = state.currentProjectId;
+  const [landowners, alerts] = await Promise.all([
+    api(`/projects/${pid}/landowners`),
+    api(`/projects/${pid}/alerts`),
+  ]);
+  state.projectCache[pid].landowners = landowners;
+
+  if (!landowners.length) {
+    el.innerHTML = `<div class="empty-state">請先建立地主資料</div>`;
+    return;
+  }
+
+  const selectedId = state.selectedContactLandownerId && landowners.some((o) => o.id === state.selectedContactLandownerId)
+    ? state.selectedContactLandownerId
+    : landowners[0].id;
+  state.selectedContactLandownerId = selectedId;
+
+  el.innerHTML = `
+    ${
+      alerts.length
+        ? `<div class="card" style="margin-bottom:16px;border-left:4px solid var(--danger)">
+            <h3 style="margin-top:0">⚠ 需跟進地主 (${alerts.length})</h3>
+            <div class="table-wrap" style="box-shadow:none;border:none">
+              <table>
+                <thead><tr><th>姓名</th><th>聯絡狀態</th><th>最後聯絡</th><th>未聯絡天數</th></tr></thead>
+                <tbody>
+                  ${alerts
+                    .map(
+                      (a) => `<tr>
+                        <td>${escapeHtml(a.landowner_name)}</td>
+                        <td><span class="contact-status-badge cs-${a.contact_status}">${CONTACT_STATUS_LABEL[a.contact_status]}</span></td>
+                        <td>${a.last_contact_date ? fmtDateTime(a.last_contact_date) : "尚無紀錄"}</td>
+                        <td>${a.days_since_last_contact ?? "-"}</td>
+                      </tr>`
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            </div>
+          </div>`
+        : ""
+    }
+    <div class="section-toolbar">
+      <h3>聯絡紀錄</h3>
+      <div style="display:flex;gap:10px;align-items:center">
+        <select id="contact-landowner-select" style="width:auto">
+          ${landowners.map((o) => `<option value="${o.id}" ${o.id === selectedId ? "selected" : ""}>${escapeHtml(o.name)}</option>`).join("")}
+        </select>
+        ${isEditor() ? `<button class="btn-primary btn-sm" id="add-contact-btn">+ 新增紀錄</button>` : ""}
+      </div>
+    </div>
+    <div id="contact-log-list"></div>
+  `;
+
+  document.getElementById("contact-landowner-select").addEventListener("change", (e) => {
+    state.selectedContactLandownerId = Number(e.target.value);
+    loadContactLogList();
+  });
+  const addBtn = document.getElementById("add-contact-btn");
+  if (addBtn) addBtn.addEventListener("click", () => openAddContactModal(state.selectedContactLandownerId));
+
+  await loadContactLogList();
+}
+
+async function loadContactLogList() {
+  const pid = state.currentProjectId;
+  const lid = state.selectedContactLandownerId;
+  const listEl = document.getElementById("contact-log-list");
+  listEl.innerHTML = `<div class="empty-state">載入中...</div>`;
+  const logs = await api(`/projects/${pid}/landowners/${lid}/contacts`);
+  if (!logs.length) {
+    listEl.innerHTML = `<div class="empty-state">尚無聯絡紀錄</div>`;
+    return;
+  }
+  listEl.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>日期</th><th>方式</th><th>結果</th><th>備註</th><th>下次跟進</th></tr></thead>
+        <tbody>
+          ${logs
+            .map(
+              (c) => `<tr>
+                <td>${fmtDateTime(c.contact_date)}</td>
+                <td>${CONTACT_METHOD_LABEL[c.contact_method] || c.contact_method}</td>
+                <td><span class="consent-status-badge cs-${c.contact_result === "agreed" ? "agreed" : c.contact_result === "opposed" ? "opposed" : "pending"}">${CONTACT_RESULT_LABEL[c.contact_result] || c.contact_result}</span></td>
+                <td>${escapeHtml(c.notes) || "-"}</td>
+                <td>${fmtDate(c.next_follow_up_date)}</td>
+              </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function openAddContactModal(landownerId) {
+  const now = new Date();
+  const localIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  openModal(
+    "新增聯絡紀錄",
+    `
+    <form id="contact-form">
+      <div class="field-row">
+        <div class="field"><label>聯絡時間</label><input type="datetime-local" name="contact_date" value="${localIso}" required></div>
+        <div class="field"><label>聯絡方式</label>
+          <select name="contact_method">
+            ${Object.entries(CONTACT_METHOD_LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>聯絡結果</label>
+        <select name="contact_result">
+          ${Object.entries(CONTACT_RESULT_LABEL).map(([k, v]) => `<option value="${k}" ${k === "undecided" ? "selected" : ""}>${v}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>備註</label><textarea name="notes" rows="2"></textarea></div>
+      </div>
+      <div class="field"><label>下次跟進日期(選填)</label><input type="date" name="next_follow_up_date"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-primary">新增</button>
+      </div>
+    </form>`
+  );
+  document.getElementById("contact-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const data = Object.fromEntries(fd.entries());
+    const payload = {
+      landowner_id: landownerId,
+      contact_date: new Date(data.contact_date).toISOString(),
+      contact_method: data.contact_method,
+      contact_result: data.contact_result,
+      notes: data.notes || null,
+      next_follow_up_date: data.next_follow_up_date || null,
+    };
+    try {
+      await api(`/projects/${state.currentProjectId}/landowners/${landownerId}/contacts`, { method: "POST", body: payload });
+      closeModal();
+      toast("聯絡紀錄已新增", "success");
+      renderTab("contacts");
+    } catch (err) {}
+  });
+}
+
+/* ================= Tab: Documents ================= */
+
+async function renderDocumentsTab(el) {
+  const pid = state.currentProjectId;
+  const docs = await api(`/projects/${pid}/documents`);
+
+  el.innerHTML = `
+    <div class="section-toolbar">
+      <h3>文件清單 (${docs.length})</h3>
+      ${isEditor() ? `<button class="btn-primary btn-sm" id="upload-doc-btn">+ 上傳文件</button>` : ""}
+    </div>
+    ${
+      docs.length
+        ? `<div class="table-wrap">
+            <table>
+              <thead><tr><th>檔名</th><th>類型</th><th>大小</th><th>上傳時間</th><th>說明</th><th>操作</th></tr></thead>
+              <tbody>
+                ${docs
+                  .map(
+                    (d) => `<tr>
+                      <td>${escapeHtml(d.file_name)}</td>
+                      <td>${DOC_TYPE_LABEL[d.doc_type] || d.doc_type}</td>
+                      <td>${(d.file_size_bytes / 1024).toFixed(1)} KB</td>
+                      <td>${fmtDateTime(d.uploaded_at)}</td>
+                      <td>${escapeHtml(d.description) || "-"}</td>
+                      <td class="actions-cell">
+                        <button class="btn-secondary btn-sm" data-download="${d.id}" data-filename="${escapeHtml(d.file_name)}">下載</button>
+                        ${isEditor() ? `<button class="btn-danger btn-sm" data-delete-doc="${d.id}">刪除</button>` : ""}
+                      </td>
+                    </tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>`
+        : `<div class="empty-state">尚無文件</div>`
+    }
+  `;
+
+  el.querySelectorAll("[data-download]").forEach((btn) => {
+    btn.addEventListener("click", () => downloadDocument(Number(btn.dataset.download), btn.dataset.filename));
+  });
+  el.querySelectorAll("[data-delete-doc]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("確定要刪除此文件嗎?")) return;
+      try {
+        await api(`/projects/${pid}/documents/${btn.dataset.deleteDoc}`, { method: "DELETE" });
+        toast("已刪除", "success");
+        renderTab("documents");
+      } catch (err) {}
+    });
+  });
+  const uploadBtn = document.getElementById("upload-doc-btn");
+  if (uploadBtn) uploadBtn.addEventListener("click", openUploadDocumentModal);
+}
+
+async function downloadDocument(docId, fileName) {
+  try {
+    const res = await api(`/projects/${state.currentProjectId}/documents/${docId}/download`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {}
+}
+
+function openUploadDocumentModal() {
+  const landowners = state.projectCache[state.currentProjectId]?.landowners || [];
+  openModal(
+    "上傳文件",
+    `
+    <form id="upload-form">
+      <div class="field"><label>檔案</label><input type="file" name="file" required></div>
+      <div class="field-row">
+        <div class="field"><label>文件類型</label>
+          <select name="doc_type">
+            ${Object.entries(DOC_TYPE_LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>關聯地主(選填)</label>
+          <select name="landowner_id">
+            <option value="">— 無 —</option>
+            ${landowners.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="field"><label>說明</label><textarea name="description" rows="2"></textarea></div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-primary">上傳</button>
+      </div>
+    </form>`
+  );
+  document.getElementById("upload-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    if (!fd.get("landowner_id")) fd.delete("landowner_id");
+    try {
+      await api(`/projects/${state.currentProjectId}/documents`, { method: "POST", body: fd, isForm: true });
+      closeModal();
+      toast("文件已上傳", "success");
+      renderTab("documents");
+    } catch (err) {}
+  });
+}
+
+/* ================= Tab: Expenses ================= */
+
+async function renderExpensesTab(el) {
+  const pid = state.currentProjectId;
+  const [expenses, summary, categories] = await Promise.all([
+    api(`/projects/${pid}/expenses`),
+    api(`/projects/${pid}/expenses/summary`),
+    api(`/expense-categories`),
+  ]);
+  state.projectCache[pid].categories = categories;
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <h3 style="margin-top:0">支出統計</h3>
+      <div style="font-size:22px;font-weight:700;margin-bottom:10px">NT$ ${fmtMoney(summary.total_amount)}</div>
+      ${summary.by_category
+        .map(
+          (c) => `
+        <div class="card-meta-row" style="margin-bottom:4px">
+          <span>${escapeHtml(c.category_name) || "未分類"}</span><span>NT$ ${fmtMoney(c.total_amount)}</span>
+        </div>`
+        )
+        .join("")}
+    </div>
+    <div class="section-toolbar">
+      <h3>支出明細 (${expenses.length})</h3>
+      <div style="display:flex;gap:10px">
+        ${isAdmin() ? `<button class="btn-secondary btn-sm" id="manage-categories-btn">管理類別</button>` : ""}
+        ${isEditor() ? `<button class="btn-primary btn-sm" id="add-expense-btn">+ 新增支出</button>` : ""}
+      </div>
+    </div>
+    ${
+      expenses.length
+        ? `<div class="table-wrap">
+            <table>
+              <thead><tr><th>日期</th><th>類別</th><th>金額</th><th>廠商</th><th>說明</th>${isEditor() ? "<th>操作</th>" : ""}</tr></thead>
+              <tbody>
+                ${expenses
+                  .map(
+                    (ex) => `<tr>
+                      <td>${fmtDate(ex.expense_date)}</td>
+                      <td>${escapeHtml(catById[ex.category_id]) || "-"}</td>
+                      <td>NT$ ${fmtMoney(ex.amount)}</td>
+                      <td>${escapeHtml(ex.vendor) || "-"}</td>
+                      <td>${escapeHtml(ex.description) || "-"}</td>
+                      ${
+                        isEditor()
+                          ? `<td class="actions-cell">
+                              <button class="btn-danger btn-sm" data-delete-expense="${ex.id}">刪除</button>
+                            </td>`
+                          : ""
+                      }
+                    </tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>`
+        : `<div class="empty-state">尚無支出紀錄</div>`
+    }
+  `;
+
+  el.querySelectorAll("[data-delete-expense]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("確定要刪除此筆支出嗎?")) return;
+      try {
+        await api(`/projects/${pid}/expenses/${btn.dataset.deleteExpense}`, { method: "DELETE" });
+        toast("已刪除", "success");
+        renderTab("expenses");
+      } catch (err) {}
+    });
+  });
+  const addBtn = document.getElementById("add-expense-btn");
+  if (addBtn) addBtn.addEventListener("click", () => openAddExpenseModal(categories));
+  const manageBtn = document.getElementById("manage-categories-btn");
+  if (manageBtn) manageBtn.addEventListener("click", () => openManageCategoriesModal(categories));
+}
+
+function openAddExpenseModal(categories) {
+  openModal(
+    "新增支出",
+    `
+    <form id="expense-form">
+      <div class="field-row">
+        <div class="field"><label>日期</label><input type="date" name="expense_date" value="${new Date().toISOString().slice(0, 10)}" required></div>
+        <div class="field"><label>金額</label><input type="number" name="amount" step="0.01" required></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>類別</label>
+          <select name="category_id">
+            <option value="">— 未分類 —</option>
+            ${categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>廠商</label><input name="vendor"></div>
+      </div>
+      <div class="field"><label>說明</label><textarea name="description" rows="2"></textarea></div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-primary">新增</button>
+      </div>
+    </form>`
+  );
+  document.getElementById("expense-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const data = Object.fromEntries(fd.entries());
+    const payload = {
+      category_id: data.category_id ? Number(data.category_id) : null,
+      amount: Number(data.amount),
+      expense_date: data.expense_date,
+      vendor: data.vendor || null,
+      description: data.description || null,
+    };
+    try {
+      await api(`/projects/${state.currentProjectId}/expenses`, { method: "POST", body: payload });
+      closeModal();
+      toast("支出已新增", "success");
+      renderTab("expenses");
+    } catch (err) {}
+  });
+}
+
+function openManageCategoriesModal(categories) {
+  function renderList(cats) {
+    return cats
+      .map(
+        (c) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+          <span>${escapeHtml(c.name)} ${!c.is_active ? '<span class="mini-badge">已停用</span>' : ""}</span>
+          <div class="actions-cell">
+            <button class="btn-secondary btn-sm" data-toggle-cat="${c.id}" data-active="${c.is_active}">${c.is_active ? "停用" : "啟用"}</button>
+            <button class="btn-danger btn-sm" data-delete-cat="${c.id}">刪除</button>
+          </div>
+        </div>`
+      )
+      .join("");
+  }
+
+  openModal(
+    "管理費用類別",
+    `
+    <div id="category-list">${renderList(categories)}</div>
+    <form id="new-category-form" style="margin-top:16px;display:flex;gap:8px">
+      <input name="name" placeholder="新增類別名稱" required style="flex:1">
+      <button type="submit" class="btn-primary btn-sm">新增</button>
+    </form>
+    `
+  );
+
+  async function refresh() {
+    const cats = await api(`/expense-categories`);
+    document.getElementById("category-list").innerHTML = renderList(cats);
+    wireButtons();
+  }
+
+  function wireButtons() {
+    document.querySelectorAll("[data-toggle-cat]").forEach((btn) => {
+      btn.onclick = async () => {
+        const isActive = btn.dataset.active === "true";
+        try {
+          await api(`/expense-categories/${btn.dataset.toggleCat}`, { method: "PATCH", body: { is_active: !isActive } });
+          await refresh();
+        } catch (err) {}
+      };
+    });
+    document.querySelectorAll("[data-delete-cat]").forEach((btn) => {
+      btn.onclick = async () => {
+        if (!confirm("確定要刪除此類別嗎?")) return;
+        try {
+          await api(`/expense-categories/${btn.dataset.deleteCat}`, { method: "DELETE" });
+          await refresh();
+        } catch (err) {}
+      };
+    });
+  }
+  wireButtons();
+
+  document.getElementById("new-category-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try {
+      await api(`/expense-categories`, { method: "POST", body: { name: fd.get("name") } });
+      e.target.reset();
+      await refresh();
+    } catch (err) {}
+  });
+}
+
+/* ================= Users ================= */
+
+async function goToUsers() {
+  setActiveNav("users");
+  showView("view-users");
+  await loadUsers();
+}
+
+async function loadUsers() {
+  const wrap = document.getElementById("users-table-wrap");
+  wrap.innerHTML = `<div class="empty-state">載入中...</div>`;
+  const users = await api("/users");
+  const roleLabel = { admin: "主管", staff: "開發人員", public: "地主" };
+
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th>帳號</th><th>顯示名稱</th><th>角色</th><th>Email</th><th>狀態</th><th>操作</th></tr></thead>
+      <tbody>
+        ${users
+          .map(
+            (u) => `<tr>
+              <td>${escapeHtml(u.username)}</td>
+              <td>${escapeHtml(u.display_name)}</td>
+              <td><span class="role-badge ${u.role}">${roleLabel[u.role] || u.role}</span></td>
+              <td>${escapeHtml(u.email) || "-"}</td>
+              <td><span class="mini-badge ${u.is_active ? "gate-ok" : "alert"}">${u.is_active ? "啟用" : "停用"}</span></td>
+              <td class="actions-cell">
+                <button class="btn-secondary btn-sm" data-edit-user="${u.id}">編輯</button>
+                <button class="btn-secondary btn-sm" data-toggle-user="${u.id}" data-active="${u.is_active}">${u.is_active ? "停用" : "啟用"}</button>
+                <button class="btn-danger btn-sm" data-delete-user="${u.id}">刪除</button>
+              </td>
+            </tr>`
+          )
+          .join("")}
+      </tbody>
+    </table>`;
+
+  wrap.querySelectorAll("[data-edit-user]").forEach((btn) => {
+    btn.addEventListener("click", () => openEditUserModal(users.find((u) => u.id === Number(btn.dataset.editUser))));
+  });
+  wrap.querySelectorAll("[data-toggle-user]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const isActive = btn.dataset.active === "true";
+      try {
+        await api(`/users/${btn.dataset.toggleUser}/active`, { method: "PATCH", body: { is_active: !isActive } });
+        toast("已更新狀態", "success");
+        loadUsers();
+      } catch (err) {}
+    });
+  });
+  wrap.querySelectorAll("[data-delete-user]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("確定要刪除此使用者嗎?")) return;
+      try {
+        await api(`/users/${btn.dataset.deleteUser}`, { method: "DELETE" });
+        toast("已刪除", "success");
+        loadUsers();
+      } catch (err) {}
+    });
+  });
+}
+
+document.getElementById("new-user-btn").addEventListener("click", () => {
+  openModal(
+    "新增使用者",
+    `
+    <form id="user-form">
+      <div class="field-row">
+        <div class="field"><label>帳號</label><input name="username" required></div>
+        <div class="field"><label>密碼</label><input name="password" type="password" required></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>顯示名稱</label><input name="display_name" required></div>
+        <div class="field"><label>角色</label>
+          <select name="role">
+            <option value="staff">開發人員</option>
+            <option value="admin">主管</option>
+            <option value="public">地主</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Email</label><input name="email" type="email"></div>
+        <div class="field"><label>電話</label><input name="phone"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-primary">建立</button>
+      </div>
+    </form>`
+  );
+  document.getElementById("user-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    try {
+      await api("/users", { method: "POST", body: payload });
+      closeModal();
+      toast("使用者已建立", "success");
+      loadUsers();
+    } catch (err) {}
+  });
+});
+
+function openEditUserModal(user) {
+  openModal(
+    "編輯使用者",
+    `
+    <form id="user-edit-form">
+      <div class="field-row">
+        <div class="field"><label>顯示名稱</label><input name="display_name" value="${escapeHtml(user.display_name)}" required></div>
+        <div class="field"><label>角色</label>
+          <select name="role">
+            <option value="staff" ${user.role === "staff" ? "selected" : ""}>開發人員</option>
+            <option value="admin" ${user.role === "admin" ? "selected" : ""}>主管</option>
+            <option value="public" ${user.role === "public" ? "selected" : ""}>地主</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Email</label><input name="email" type="email" value="${escapeHtml(user.email) || ""}"></div>
+        <div class="field"><label>電話</label><input name="phone" value="${escapeHtml(user.phone) || ""}"></div>
+      </div>
+      <div class="field"><label>新密碼(留空表示不變更)</label><input name="password" type="password"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-primary">儲存</button>
+      </div>
+    </form>`
+  );
+  document.getElementById("user-edit-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    if (!payload.password) delete payload.password;
+    try {
+      await api(`/users/${user.id}`, { method: "PATCH", body: payload });
+      closeModal();
+      toast("已更新", "success");
+      loadUsers();
+    } catch (err) {}
+  });
+}
+
+/* ================= Bootstrap ================= */
+
+(async function init() {
+  if (state.token) {
+    try {
+      await loadCurrentUser();
+      return;
+    } catch (e) {
+      /* fall through to login */
+    }
+  }
+  document.getElementById("view-login").classList.remove("hidden");
+})();
+</script>
+</body>
+</html>

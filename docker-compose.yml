@@ -1,0 +1,68 @@
+name: urban_renewal
+
+services:
+  # Only started when running with `--profile local-db`. Skip it (plain `docker compose
+  # up`) to point the api service at an external MariaDB instead - e.g. a database on
+  # the NAS - by setting DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME in .env.
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    profiles: ["local-db"]
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES}
+      UPLOAD_DIR: /app/uploads
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      ALERT_UNCONTACTED_DAYS: ${ALERT_UNCONTACTED_DAYS}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD}
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./frontend/prototype.html:/usr/share/nginx/html/index.html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8090:80"
+    depends_on:
+      - api
+
+volumes:
+  db_data:

@@ -1,0 +1,6 @@
+.env
+.env.nas
+uploads/
+__pycache__/
+*.pyc
+.venv/
