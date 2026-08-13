@@ -6,7 +6,6 @@ from pydantic import BaseModel
 class OcrJobRead(BaseModel):
     id: int
     project_id: int
-    document_id: int
     status: str
     job_type: str
     error_message: str | None = None
@@ -17,27 +16,62 @@ class OcrJobRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class OcrMatchResultRead(BaseModel):
-    id: int
-    ocr_job_id: int
-    extracted_name: str | None = None
-    extracted_id_number: str | None = None
-    extracted_parcel_number: str | None = None
-    extracted_section: str | None = None
-    extracted_address: str | None = None
-    extracted_total_area_sqm: float | None = None
-    extracted_ownership_numerator: int | None = None
-    extracted_ownership_denominator: int | None = None
-    raw_text: str | None = None
-    review_status: str
+class LandOwnershipEntry(BaseModel):
+    registration_order: str | None = None
+    owner_name: str | None = None
+    id_number: str | None = None
+    ownership_numerator: int | None = None
+    ownership_denominator: int | None = None
+    address: str | None = None
 
-    model_config = {"from_attributes": True}
+
+class LandParcelExtraction(BaseModel):
+    township: str | None = None
+    section: str | None = None
+    subsection: str | None = None
+    parcel_number: str | None = None
+    area_sqm: float | None = None
+    owners: list[LandOwnershipEntry] = []
+
+
+class EncumbranceEntry(BaseModel):
+    registration_order: str | None = None
+    applies_to_parcels: str | None = None
+    right_type: str | None = None
+    right_holder: str | None = None
+    debtor_info: str | None = None
+
+
+class BuildingOwnershipEntry(BaseModel):
+    registration_order: str | None = None
+    owner_name: str | None = None
+    ownership_numerator: int | None = None
+    ownership_denominator: int | None = None
+    address: str | None = None
+
+
+class BuildingExtraction(BaseModel):
+    building_number: str | None = None
+    building_address: str | None = None
+    parcel_number: str | None = None
+    total_floors: str | None = None
+    floor: str | None = None
+    total_area_sqm: float | None = None
+    floor_area_sqm: float | None = None
+    owners: list[BuildingOwnershipEntry] = []
+
+
+class TitleDeedExtraction(BaseModel):
+    """The structured extraction: one entry per distinct 地號/建號 found anywhere in
+    the uploaded pages (a single title deed as well as a batch covering many parcels/
+    buildings both fit this shape). All fields are best-effort suggestions for the
+    frontend's step-by-step review wizard, not authoritative values."""
+
+    land_parcels: list[LandParcelExtraction] = []
+    encumbrances: list[EncumbranceEntry] = []
+    buildings: list[BuildingExtraction] = []
 
 
 class OcrExtractionResult(BaseModel):
-    """Response for a completed (or failed) OCR extraction, ready for the
-    frontend to pre-fill the 新增地主 form. All fields are best-effort
-    suggestions and must be reviewed by the user before saving."""
-
     job: OcrJobRead
-    match: OcrMatchResultRead | None = None
+    data: TitleDeedExtraction | None = None

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -18,5 +20,18 @@ class UserInfo(BaseModel):
     role: str
     email: str | None = None
     phone: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class LoginLogRead(BaseModel):
+    id: int
+    user_id: int
+    username: str
+    display_name: str
+    role: str
+    action: str
+    occurred_at: datetime
+    ip_address: str | None = None
 
     model_config = {"from_attributes": True}

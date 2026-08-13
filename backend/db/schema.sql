@@ -24,6 +24,18 @@ CREATE TABLE users (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 1b. login_logs (audit trail of every login/logout event)
+CREATE TABLE login_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    action ENUM('login','logout') NOT NULL,
+    occurred_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45),
+    CONSTRAINT fk_login_logs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_login_logs_user (user_id),
+    INDEX idx_login_logs_occurred (occurred_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 2. projects
 CREATE TABLE projects (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -86,7 +98,10 @@ CREATE TABLE land_records (
     project_id INT NOT NULL,
     landowner_id INT NULL,
     parcel_number VARCHAR(100) NOT NULL,
+    township VARCHAR(50),
     section VARCHAR(100),
+    subsection VARCHAR(100),
+    registration_order VARCHAR(50),
     total_area_sqm DECIMAL(12,2) NOT NULL DEFAULT 0,
     ownership_numerator INT NOT NULL DEFAULT 1,
     ownership_denominator INT NOT NULL DEFAULT 1,
@@ -110,6 +125,8 @@ CREATE TABLE building_records (
     building_number VARCHAR(100),
     address VARCHAR(255),
     floor VARCHAR(20),
+    total_floors VARCHAR(50),
+    registration_order VARCHAR(50),
     structure_area_sqm DECIMAL(12,2) NOT NULL DEFAULT 0,
     auxiliary_area_sqm DECIMAL(12,2) NOT NULL DEFAULT 0,
     common_area_sqm DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -124,6 +141,22 @@ CREATE TABLE building_records (
     CONSTRAINT fk_building_records_land FOREIGN KEY (land_record_id) REFERENCES land_records(id) ON DELETE SET NULL,
     INDEX idx_building_records_project (project_id),
     INDEX idx_building_records_landowner (landowner_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 7b. encumbrances (他項權利部 - mortgages/liens etc; informational, not tied to a
+-- specific land_record row since one entry can apply to several parcel numbers)
+CREATE TABLE encumbrances (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    project_id INT NOT NULL,
+    applies_to_parcels VARCHAR(255),
+    registration_order VARCHAR(50),
+    right_type VARCHAR(100),
+    right_holder VARCHAR(255),
+    debtor_info TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_encumbrances_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    INDEX idx_encumbrances_project (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 8. contact_logs
@@ -209,42 +242,38 @@ CREATE TABLE expenses (
     INDEX idx_expenses_project (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 13. ocr_jobs
+-- 13. ocr_jobs (one job = one 謄本, which may span several scanned pages/files)
 CREATE TABLE ocr_jobs (
     id INT AUTO_INCREMENT PRIMARY KEY,
     project_id INT NOT NULL,
-    document_id INT NOT NULL,
     status ENUM('pending','processing','completed','failed') NOT NULL DEFAULT 'pending',
-    job_type VARCHAR(50) NOT NULL DEFAULT 'land_record',
+    job_type VARCHAR(50) NOT NULL DEFAULT 'title_deed',
     error_message TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at DATETIME NULL,
     completed_at DATETIME NULL,
     CONSTRAINT fk_ocr_jobs_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-    CONSTRAINT fk_ocr_jobs_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
     INDEX idx_ocr_jobs_project (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 14. ocr_match_results
+-- 13b. ocr_job_documents (ordered pages/files that make up one ocr_job)
+CREATE TABLE ocr_job_documents (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    ocr_job_id INT NOT NULL,
+    document_id INT NOT NULL,
+    page_order INT NOT NULL DEFAULT 0,
+    CONSTRAINT fk_ocr_job_documents_job FOREIGN KEY (ocr_job_id) REFERENCES ocr_jobs(id) ON DELETE CASCADE,
+    CONSTRAINT fk_ocr_job_documents_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+    INDEX idx_ocr_job_documents_job (ocr_job_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 14. ocr_match_results (the structured five-section extraction, stored as JSON since
+-- the shape is nested/variable-length - see backend/utils/ocr.py RESPONSE_SCHEMA)
 CREATE TABLE ocr_match_results (
     id INT AUTO_INCREMENT PRIMARY KEY,
     ocr_job_id INT NOT NULL,
-    extracted_name VARCHAR(100),
-    extracted_id_number VARCHAR(20),
-    extracted_parcel_number VARCHAR(100),
-    extracted_section VARCHAR(100),
-    extracted_address VARCHAR(255),
-    extracted_total_area_sqm DECIMAL(12,2),
-    extracted_ownership_numerator INT,
-    extracted_ownership_denominator INT,
-    raw_text TEXT,
-    matched_landowner_id INT NULL,
-    confidence_score DECIMAL(5,4),
-    review_status ENUM('unreviewed','confirmed','rejected') NOT NULL DEFAULT 'unreviewed',
-    reviewed_by INT NULL,
+    extracted_data JSON,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_ocr_match_job FOREIGN KEY (ocr_job_id) REFERENCES ocr_jobs(id) ON DELETE CASCADE,
-    CONSTRAINT fk_ocr_match_landowner FOREIGN KEY (matched_landowner_id) REFERENCES landowners(id) ON DELETE SET NULL,
-    CONSTRAINT fk_ocr_match_reviewed_by FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL,
     INDEX idx_ocr_match_job (ocr_job_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

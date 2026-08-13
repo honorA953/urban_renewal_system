@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -8,10 +8,12 @@ from database import get_db
 from deps import require_staff_or_admin
 from models.document import Document
 from models.ocr import OcrJob, OcrMatchResult
+from models.ocr_job_document import OcrJobDocument
 from models.user import User
 from routers.projects import get_project_or_404
-from schemas.ocr import OcrExtractionResult, OcrJobRead
-from utils.ocr import OcrError, extract_land_title_fields
+from schemas.ocr import OcrExtractionResult, OcrJobRead, TitleDeedExtraction
+from utils.file_storage import build_upload_path
+from utils.ocr import OcrError, extract_title_deed
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["ocr"])
 
@@ -26,57 +28,65 @@ def list_ocr_jobs(
     return db.scalars(select(OcrJob).where(OcrJob.project_id == project_id).order_by(OcrJob.created_at.desc())).all()
 
 
-@router.post("/documents/{doc_id}/ocr", response_model=OcrExtractionResult, status_code=status.HTTP_201_CREATED)
-def start_ocr_job(
+@router.post("/ocr/title-deed", response_model=OcrExtractionResult, status_code=status.HTTP_201_CREATED)
+def extract_title_deed_job(
     project_id: int,
-    doc_id: int,
+    files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_staff_or_admin),
 ):
-    """Runs field extraction on an uploaded document (a scanned 土地登記謄本 image),
-    synchronously via Gemini (Google AI Studio). Extracted fields are suggestions
-    only — the frontend pre-fills the 新增地主 form for the user to review."""
-    get_project_or_404(db, project_id)
-    document = db.scalar(select(Document).where(Document.id == doc_id, Document.project_id == project_id))
-    if document is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    """Runs structured five-section extraction on 1+ scanned pages of a single 土地登記
+    謄本 (images or PDFs, in the given order), synchronously via Gemini. Every uploaded
+    page is also saved as a project document for traceability. The result is a
+    best-effort suggestion for the frontend's step-by-step review wizard."""
+    project = get_project_or_404(db, project_id)
 
-    job = OcrJob(project_id=project_id, document_id=doc_id, status="processing", job_type="land_record")
+    job = OcrJob(project_id=project_id, status="processing", job_type="title_deed")
     job.started_at = datetime.now(timezone.utc)
     db.add(job)
-    db.commit()
-    db.refresh(job)
+    db.flush()
+
+    documents: list[Document] = []
+    for upload in files:
+        content = upload.file.read()
+        disk_path, stored_name = build_upload_path(project.project_code, upload.filename or "upload")
+        with open(disk_path, "wb") as out:
+            out.write(content)
+        document = Document(
+            project_id=project_id,
+            doc_type="property_register",
+            file_name=upload.filename or stored_name,
+            file_path=disk_path,
+            file_size_bytes=len(content),
+            mime_type=upload.content_type,
+            uploaded_by=current_user.id,
+            description="謄本掃描匯入",
+        )
+        db.add(document)
+        db.flush()
+        documents.append(document)
+        db.add(OcrJobDocument(ocr_job_id=job.id, document_id=document.id, page_order=len(documents) - 1))
 
     try:
-        with open(document.file_path, "rb") as f:
-            image_bytes = f.read()
-        parsed = extract_land_title_fields(image_bytes, document.mime_type)
+        file_payload = []
+        for doc in documents:
+            with open(doc.file_path, "rb") as f:
+                file_payload.append((f.read(), doc.mime_type))
+        parsed = extract_title_deed(file_payload)
     except (OcrError, OSError) as exc:
         job.status = "failed"
         job.error_message = str(exc)
         job.completed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(job)
-        return OcrExtractionResult(job=OcrJobRead.model_validate(job), match=None)
+        return OcrExtractionResult(job=OcrJobRead.model_validate(job), data=None)
 
-    match = OcrMatchResult(
-        ocr_job_id=job.id,
-        extracted_name=parsed["name"],
-        extracted_id_number=parsed["id_number"],
-        extracted_parcel_number=parsed["parcel_number"],
-        extracted_section=parsed["section"],
-        extracted_address=parsed["address"],
-        extracted_total_area_sqm=parsed["total_area_sqm"],
-        extracted_ownership_numerator=parsed["ownership_numerator"],
-        extracted_ownership_denominator=parsed["ownership_denominator"],
-        raw_text=parsed["raw_text"],
-    )
+    match = OcrMatchResult(ocr_job_id=job.id, extracted_data=parsed)
     db.add(match)
 
     job.status = "completed"
     job.completed_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(job)
-    db.refresh(match)
 
-    return OcrExtractionResult(job=OcrJobRead.model_validate(job), match=match)
+    return OcrExtractionResult(job=OcrJobRead.model_validate(job), data=TitleDeedExtraction(**parsed))

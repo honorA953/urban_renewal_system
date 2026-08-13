@@ -20,6 +20,8 @@ class BuildingRecord(Base):
     building_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     floor: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    total_floors: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    registration_order: Mapped[str | None] = mapped_column(String(50), nullable=True)
     structure_area_sqm: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     auxiliary_area_sqm: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     common_area_sqm: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)

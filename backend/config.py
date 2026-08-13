@@ -1,3 +1,5 @@
+from urllib.parse import quote_plus
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,15 +31,15 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        # DB_USER/DB_PASSWORD must be percent-encoded before going into the connection
+        # URL - otherwise special characters (e.g. a literal "@" in the password) get
+        # misinterpreted as URL syntax (like the user:pass/host separator) and silently
+        # corrupt the parsed host/credentials instead of raising a clear error.
+        user = quote_plus(self.DB_USER)
+        password = quote_plus(self.DB_PASSWORD)
         if self.DB_SOCKET:
-            return (
-                f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}"
-                f"@/{self.DB_NAME}?unix_socket={self.DB_SOCKET}&charset=utf8mb4"
-            )
-        return (
-            f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}"
-            f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?charset=utf8mb4"
-        )
+            return f"mysql+pymysql://{user}:{password}@/{self.DB_NAME}?unix_socket={self.DB_SOCKET}&charset=utf8mb4"
+        return f"mysql+pymysql://{user}:{password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?charset=utf8mb4"
 
     @property
     def cors_origins_list(self) -> list[str]:

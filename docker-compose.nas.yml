@@ -2,19 +2,12 @@
 #
 # Differences from the local compose file, all driven by quirks documented in
 # 後端開發_CLAUDE.md for this specific NAS:
-#   - No mariadb service: connects to the native MariaDB10 package already running on
-#     the NAS (a dedicated database + user, not root, not the old production app's
-#     credentials - see the deployment plan for the CREATE DATABASE / CREATE USER
-#     statements).
-#   - Connects to that MariaDB via its Unix socket (DB_SOCKET), NOT TCP 127.0.0.1:3306.
-#     This NAS has several unrelated pre-existing containers, and one of them (an
-#     unhealthy, unrelated "mariadb" container) already occupies host port 3306 on all
-#     interfaces - any TCP connection to 127.0.0.1:3306 gets hijacked by that container
-#     instead of reaching the native MariaDB10 package. The socket path bypasses this
-#     entirely. Find the real socket path with:
-#       mysql -u root -p -e "SHOW VARIABLES LIKE 'socket';"
-#     (was /run/mysqld/mysqld10.sock at the time this was set up - confirm it's still
-#     correct if MariaDB10 is ever reinstalled/upgraded).
+#   - No mariadb service: connects over TCP to a dedicated "urban_renewal" database on
+#     a MariaDB container already running on this NAS (host 192.168.0.20, port 13306 -
+#     a deliberately/explicitly mapped port for that container, unlike host port 3306
+#     which is hijacked by an unrelated abandoned container on this NAS - see
+#     後端開發_CLAUDE.md for that whole saga). Dedicated user, not root, not another
+#     app's credentials.
 #   - api and nginx both use network_mode: host, because bridge networking is broken on
 #     this NAS (bridge-to-bridge and bridge-to-host traffic hits a broken iptables
 #     FORWARD chain).
@@ -36,7 +29,8 @@ services:
     restart: unless-stopped
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
     environment:
-      DB_SOCKET: ${DB_SOCKET}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -51,7 +45,6 @@ services:
     volumes:
       - ./backend:/app
       - ./uploads:/app/uploads
-      - /run/mysqld:/run/mysqld:ro
 
   nginx:
     image: nginx:alpine

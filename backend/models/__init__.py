@@ -9,6 +9,9 @@ from models.consent_record import ConsentRecord
 from models.document import Document
 from models.expense import Expense, ExpenseCategory
 from models.ocr import OcrJob, OcrMatchResult
+from models.ocr_job_document import OcrJobDocument
+from models.encumbrance import Encumbrance
+from models.login_log import LoginLog
 
 __all__ = [
     "User",
@@ -25,4 +28,7 @@ __all__ = [
     "ExpenseCategory",
     "OcrJob",
     "OcrMatchResult",
+    "OcrJobDocument",
+    "Encumbrance",
+    "LoginLog",
 ]
