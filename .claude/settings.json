@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8090/)",
+      "Bash(python -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(docker exec urban_renewal-api-1 python -c ' *)",
+      "Bash(curl -s -o /dev/null -w \"frontend: %{http_code}\\\\n\" http://localhost:8090/)",
+      "Bash(curl -s -o /dev/null -w \"api health: %{http_code}\\\\n\" http://localhost:8000/health)",
+      "Bash(node -e ' *)",
+      "Read(//c/Users/HONOR/AppData/Local/Temp/claude/c--Users-HONOR-Desktop-------/38817ad0-908f-4df2-86e8-df1f60a2c157/scratchpad/**)",
+      "Bash(node --check /c/Users/HONOR/AppData/Local/Temp/claude/c--Users-HONOR-Desktop-------/38817ad0-908f-4df2-86e8-df1f60a2c157/scratchpad/extracted2.js)"
+    ]
+  }
+}

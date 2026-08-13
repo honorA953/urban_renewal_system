@@ -108,6 +108,39 @@ def _assert_gate_passed(db: Session, project_id: int, stage: int) -> None:
     # stages 0, 3, 5, 6, 7 have no automated gate - manual milestone confirmation only.
 
 
+def try_auto_complete_stage(db: Session, project_id: int, stage: int, current_user: User) -> None:
+    """Best-effort: marks `stage` completed (without committing - the caller's own
+    commit covers it) if it's still the project's current pending stage and its gate
+    condition is already satisfied. Used to auto-advance the SOP when underlying data
+    crosses a gate threshold outside of an explicit "complete stage" action - e.g.
+    creating the first landowner clears stage 1's gate. Silently no-ops otherwise."""
+    sop = get_or_create_sop(db, project_id)
+    if sop.current_stage != stage:
+        return
+    stage_key = str(stage)
+    stage_entry = sop.stage_data["stages"].get(stage_key)
+    if not stage_entry or stage_entry["status"] != "pending":
+        return
+    try:
+        _assert_gate_passed(db, project_id, stage)
+    except HTTPException:
+        return
+
+    stage_data = dict(sop.stage_data)
+    stages = dict(stage_data["stages"])
+    entry = dict(stages[stage_key])
+    entry["status"] = "completed"
+    entry["completed_at"] = datetime.now(timezone.utc).isoformat()
+    entry["completed_by"] = current_user.id
+    stages[stage_key] = entry
+    stage_data["stages"] = stages
+    sop.stage_data = stage_data
+    sop.current_stage = min(stage + 1, FINAL_STAGE)
+
+    project = get_project_or_404(db, project_id)
+    project.current_stage = sop.current_stage
+
+
 @router.get("", response_model=SopStatusResponse)
 def get_sop_status(
     project_id: int,

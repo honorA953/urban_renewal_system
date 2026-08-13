@@ -41,6 +41,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS}
       ALERT_UNCONTACTED_DAYS: ${ALERT_UNCONTACTED_DAYS}
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL}
     volumes:
       - ./backend:/app
       - ./uploads:/app/uploads

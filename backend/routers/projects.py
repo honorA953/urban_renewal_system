@@ -1,9 +1,13 @@
+import os
+import shutil
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from config import settings
 from database import get_db
-from deps import get_current_user, require_staff_or_admin
+from deps import get_current_user, require_admin, require_staff_or_admin
 from models.project import Project, ProjectMember
 from models.sop import SopStage
 from models.user import User
@@ -88,6 +92,24 @@ def update_project(
     db.commit()
     db.refresh(project)
     return project
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Permanently deletes a project and everything under it (landowners, land/building
+    records, contact logs, consent records, documents, expenses, SOP progress) via
+    ON DELETE CASCADE. Admin-only and irreversible - the frontend requires re-typing
+    the project code before calling this."""
+    project = get_project_or_404(db, project_id)
+    upload_dir = os.path.join(settings.UPLOAD_DIR, project.project_code)
+    if os.path.isdir(upload_dir):
+        shutil.rmtree(upload_dir, ignore_errors=True)
+    db.delete(project)
+    db.commit()
 
 
 @router.get("/{project_id}/consent-ratio", response_model=ConsentRatio)

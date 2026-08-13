@@ -11,6 +11,14 @@ class LandRecordCreate(BaseModel):
     ownership_denominator: int = Field(default=1, gt=0)
 
 
+class LandRecordUpdate(BaseModel):
+    parcel_number: str | None = Field(default=None, min_length=1, max_length=100)
+    section: str | None = None
+    total_area_sqm: float | None = None
+    ownership_numerator: int | None = Field(default=None, gt=0)
+    ownership_denominator: int | None = Field(default=None, gt=0)
+
+
 class LandRecordRead(BaseModel):
     id: int
     landowner_id: int | None = None
@@ -34,6 +42,17 @@ class BuildingRecordCreate(BaseModel):
     common_area_sqm: float = 0
     ownership_numerator: int = Field(default=1, gt=0)
     ownership_denominator: int = Field(default=1, gt=0)
+
+
+class BuildingRecordUpdate(BaseModel):
+    building_number: str | None = None
+    address: str | None = None
+    floor: str | None = None
+    structure_area_sqm: float | None = None
+    auxiliary_area_sqm: float | None = None
+    common_area_sqm: float | None = None
+    ownership_numerator: int | None = Field(default=None, gt=0)
+    ownership_denominator: int | None = Field(default=None, gt=0)
 
 
 class BuildingRecordRead(BaseModel):

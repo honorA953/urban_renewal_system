@@ -31,7 +31,9 @@
       "PowerShell(bcdedit /enum {current})",
       "PowerShell(Get-CimInstance Win32_BIOS)",
       "WebSearch",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "PowerShell(Get-Command gh -ErrorAction SilentlyContinue)",
+      "PowerShell(gh auth status 2>&1)"
     ],
     "additionalDirectories": [
       "c:\\Users\\yijun\\Projects\\urban-renewal-system"

@@ -9,7 +9,18 @@ from models.land_record import LandRecord
 from models.landowner import Landowner
 from models.user import User
 from routers.projects import assert_project_visible, get_project_or_404
-from schemas.landowner import LandownerCreate, LandownerRead, LandownerUpdate
+from routers.sop import try_auto_complete_stage
+from schemas.landowner import (
+    BuildingRecordCreate,
+    BuildingRecordRead,
+    BuildingRecordUpdate,
+    LandownerCreate,
+    LandownerRead,
+    LandownerUpdate,
+    LandRecordCreate,
+    LandRecordRead,
+    LandRecordUpdate,
+)
 
 router = APIRouter(prefix="/projects/{project_id}/landowners", tags=["landowners"])
 
@@ -71,6 +82,10 @@ def create_landowner(
         _compute_building_totals(record)
         db.add(record)
 
+    # Adding the first landowner satisfies stage 1's gate (謄本OCR/地主清冊) -
+    # auto-advance the SOP instead of requiring a separate manual "complete" click.
+    try_auto_complete_stage(db, project_id, stage=1, current_user=current_user)
+
     db.commit()
     return get_landowner_or_404(db, project_id, landowner.id)
 
@@ -111,4 +126,124 @@ def delete_landowner(
 ):
     landowner = get_landowner_or_404(db, project_id, landowner_id)
     db.delete(landowner)
+    db.commit()
+
+
+def get_land_record_or_404(db: Session, project_id: int, landowner_id: int, record_id: int) -> LandRecord:
+    record = db.scalar(
+        select(LandRecord).where(
+            LandRecord.id == record_id, LandRecord.project_id == project_id, LandRecord.landowner_id == landowner_id
+        )
+    )
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Land record not found")
+    return record
+
+
+@router.post("/{landowner_id}/land-records", response_model=LandRecordRead, status_code=status.HTTP_201_CREATED)
+def create_land_record(
+    project_id: int,
+    landowner_id: int,
+    payload: LandRecordCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_staff_or_admin),
+):
+    get_landowner_or_404(db, project_id, landowner_id)
+    record = LandRecord(project_id=project_id, landowner_id=landowner_id, **payload.model_dump())
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.patch("/{landowner_id}/land-records/{record_id}", response_model=LandRecordRead)
+def update_land_record(
+    project_id: int,
+    landowner_id: int,
+    record_id: int,
+    payload: LandRecordUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_staff_or_admin),
+):
+    record = get_land_record_or_404(db, project_id, landowner_id, record_id)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(record, field, value)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.delete("/{landowner_id}/land-records/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_land_record(
+    project_id: int,
+    landowner_id: int,
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_staff_or_admin),
+):
+    record = get_land_record_or_404(db, project_id, landowner_id, record_id)
+    db.delete(record)
+    db.commit()
+
+
+def get_building_record_or_404(db: Session, project_id: int, landowner_id: int, record_id: int) -> BuildingRecord:
+    record = db.scalar(
+        select(BuildingRecord).where(
+            BuildingRecord.id == record_id,
+            BuildingRecord.project_id == project_id,
+            BuildingRecord.landowner_id == landowner_id,
+        )
+    )
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Building record not found")
+    return record
+
+
+@router.post(
+    "/{landowner_id}/building-records", response_model=BuildingRecordRead, status_code=status.HTTP_201_CREATED
+)
+def create_building_record(
+    project_id: int,
+    landowner_id: int,
+    payload: BuildingRecordCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_staff_or_admin),
+):
+    get_landowner_or_404(db, project_id, landowner_id)
+    record = BuildingRecord(project_id=project_id, landowner_id=landowner_id, **payload.model_dump())
+    _compute_building_totals(record)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.patch("/{landowner_id}/building-records/{record_id}", response_model=BuildingRecordRead)
+def update_building_record(
+    project_id: int,
+    landowner_id: int,
+    record_id: int,
+    payload: BuildingRecordUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_staff_or_admin),
+):
+    record = get_building_record_or_404(db, project_id, landowner_id, record_id)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(record, field, value)
+    _compute_building_totals(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.delete("/{landowner_id}/building-records/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_building_record(
+    project_id: int,
+    landowner_id: int,
+    record_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_staff_or_admin),
+):
+    record = get_building_record_or_404(db, project_id, landowner_id, record_id)
+    db.delete(record)
     db.commit()

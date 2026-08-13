@@ -2,12 +2,22 @@
 #
 # Differences from the local compose file, all driven by quirks documented in
 # 後端開發_CLAUDE.md for this specific NAS:
-#   - No mariadb service: connects to a database already created on the NAS's existing
-#     MariaDB instance (see plan - urban_renewal_db_dev, a dedicated user, not root,
-#     not the old production app's credentials).
+#   - No mariadb service: connects to the native MariaDB10 package already running on
+#     the NAS (a dedicated database + user, not root, not the old production app's
+#     credentials - see the deployment plan for the CREATE DATABASE / CREATE USER
+#     statements).
+#   - Connects to that MariaDB via its Unix socket (DB_SOCKET), NOT TCP 127.0.0.1:3306.
+#     This NAS has several unrelated pre-existing containers, and one of them (an
+#     unhealthy, unrelated "mariadb" container) already occupies host port 3306 on all
+#     interfaces - any TCP connection to 127.0.0.1:3306 gets hijacked by that container
+#     instead of reaching the native MariaDB10 package. The socket path bypasses this
+#     entirely. Find the real socket path with:
+#       mysql -u root -p -e "SHOW VARIABLES LIKE 'socket';"
+#     (was /run/mysqld/mysqld10.sock at the time this was set up - confirm it's still
+#     correct if MariaDB10 is ever reinstalled/upgraded).
 #   - api and nginx both use network_mode: host, because bridge networking is broken on
 #     this NAS (bridge-to-bridge and bridge-to-host traffic hits a broken iptables
-#     FORWARD chain). DB_HOST is 127.0.0.1 for the same reason.
+#     FORWARD chain).
 #   - api's port is overridden to 8001 (not the Dockerfile's default 8000) because the
 #     existing old system already binds host port 8000 via network_mode: host.
 #   - build.network: host, because the bridge network can't reach PyPI during `pip
@@ -26,8 +36,7 @@ services:
     restart: unless-stopped
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
     environment:
-      DB_HOST: 127.0.0.1
-      DB_PORT: 3306
+      DB_SOCKET: ${DB_SOCKET}
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -37,9 +46,12 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS}
       ALERT_UNCONTACTED_DAYS: ${ALERT_UNCONTACTED_DAYS}
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL}
     volumes:
       - ./backend:/app
       - ./uploads:/app/uploads
+      - /run/mysqld:/run/mysqld:ro
 
   nginx:
     image: nginx:alpine
@@ -50,3 +62,17 @@ services:
       - ./frontend/nginx.nas.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - api
+
+  # Public HTTPS access without router port forwarding (not available on this NAS -
+  # see 後端開發_CLAUDE.md). Cloudflare's Quick Tunnel gives a public
+  # https://*.trycloudflare.com URL that proxies straight to nginx - no account, no
+  # domain, no open ports needed. The URL is random and changes every restart; once a
+  # real domain is available this should become a named tunnel
+  # (`cloudflared tunnel create` + `tunnel route dns`) for a stable hostname instead.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    network_mode: "host"
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://localhost:8090
+    depends_on:
+      - nginx
