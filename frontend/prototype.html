@@ -1032,6 +1032,11 @@ document.getElementById("new-project-btn").addEventListener("click", async () =>
         <div class="field"><label>地址</label><input name="address"></div>
       </div>
       <div class="field"><label>備註</label><textarea name="description" rows="3"></textarea></div>
+      <div class="field">
+        <label>謄本掃描檔(選填)</label>
+        <input type="file" id="new-project-deed-files" accept="image/*,application/pdf" multiple autocomplete="off">
+        <div class="helper-text">建立案件後會直接開啟匯入精靈,自動辨識並建立地號/建物/地主資料</div>
+      </div>
       <div class="modal-footer">
         <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
         <button type="submit" class="btn-primary">建立</button>
@@ -1041,13 +1046,18 @@ document.getElementById("new-project-btn").addEventListener("click", async () =>
   document.getElementById("project-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const deedFiles = Array.from(document.getElementById("new-project-deed-files").files);
     const payload = Object.fromEntries(fd.entries());
     try {
       const project = await api("/projects", { method: "POST", body: payload });
       closeModal();
       toast("案件已建立", "success");
       await loadDashboard();
-      openProject(project.id);
+      await openProject(project.id);
+      if (deedFiles.length) {
+        titleDeedWizard = { files: deedFiles, pages: [], step: 0, data: null, activeType: null, activeIndex: null };
+        renderWizardStep0();
+      }
     } catch (err) {}
   });
 });
