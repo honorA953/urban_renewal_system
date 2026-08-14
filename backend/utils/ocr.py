@@ -1,6 +1,7 @@
 import base64
 import json
 
+import fitz
 import httpx
 
 from config import settings
@@ -148,26 +149,82 @@ class OcrError(Exception):
 # and merging the results client-side keeps each individual call well within whatever
 # limit causes that breakdown.
 PAGES_PER_CHUNK = 8
+PDF_RENDER_DPI = 200
 
 
-def extract_title_deed(files: list[tuple[bytes, str | None]]) -> dict:
+def _expand_pdf_pages(content: bytes) -> list[tuple[bytes, str | None]]:
+    """Splits a multi-page PDF into one page-image per page. Chunking has to operate on
+    actual pages, not uploaded files - a single 27-page PDF is still just 1 "file", so
+    without this a whole batch deed uploaded as one PDF would still be sent to Gemini in
+    one request and hit the same quality breakdown chunking is meant to avoid."""
+    try:
+        doc = fitz.open(stream=content, filetype="pdf")
+        pages = [(page.get_pixmap(dpi=PDF_RENDER_DPI).tobytes("png"), "image/png") for page in doc]
+    except Exception as exc:  # fitz raises its own exception types on malformed PDFs
+        raise OcrError(f"無法讀取 PDF 檔案:{exc}") from exc
+    if not pages:
+        raise OcrError("PDF 檔案沒有任何頁面")
+    return pages
+
+
+def _flatten_to_pages(files: list[tuple[bytes, str | None]]) -> list[tuple[bytes, str | None]]:
+    pages: list[tuple[bytes, str | None]] = []
+    for content, mime_type in files:
+        if (mime_type or "").lower() == "application/pdf" or content[:5] == b"%PDF-":
+            pages.extend(_expand_pdf_pages(content))
+        else:
+            pages.append((content, mime_type))
+    return pages
+
+
+def extract_title_deed(files: list[tuple[bytes, str | None]]) -> tuple[dict, str | None]:
     """Sends 1+ scanned pages (in the given order) to Gemini (Google AI Studio) and asks
     it to return the title-deed sections as structured JSON. The pages may be a single
     地號/建號's title deed, or a batch covering many parcels/buildings - either shape is
-    returned as land_parcels/buildings arrays. Large page counts are processed in
-    chunks of PAGES_PER_CHUNK and merged (by parcel_number / building_number) to avoid
-    per-request quality breakdown. Every field is a suggestion for the user to review
-    before saving, not an authoritative value."""
+    returned as land_parcels/buildings arrays. Multi-page PDFs are first split into
+    per-page images, then large page counts are processed in chunks of PAGES_PER_CHUNK
+    and merged (by parcel_number / building_number) to avoid per-request quality
+    breakdown. Each chunk already retries once internally on failure; if a chunk still
+    fails, the other chunks' results are kept and a warning is returned alongside the
+    data instead of discarding everything. Returns (data, warning_message_or_None).
+    Every field is a suggestion for the user to review before saving, not authoritative."""
     if not settings.GEMINI_API_KEY:
         raise OcrError("尚未設定 GEMINI_API_KEY,請聯絡系統管理員設定 OCR 金鑰後再試")
     if not files:
         raise OcrError("沒有可供辨識的檔案")
 
-    chunks = [files[i : i + PAGES_PER_CHUNK] for i in range(0, len(files), PAGES_PER_CHUNK)]
-    results = [_extract_title_deed_chunk(chunk) for chunk in chunks]
-    if len(results) == 1:
-        return results[0]
-    return _merge_extractions(results)
+    pages = _flatten_to_pages(files)
+    chunks = [pages[i : i + PAGES_PER_CHUNK] for i in range(0, len(pages), PAGES_PER_CHUNK)]
+
+    results = []
+    failed_chunks = []
+    for i, chunk in enumerate(chunks):
+        try:
+            results.append(_extract_title_deed_chunk(chunk))
+        except OcrError as exc:
+            failed_chunks.append((i, exc))
+
+    if not results:
+        raise failed_chunks[0][1]
+
+    warning = None
+    if failed_chunks:
+        ranges = [f"第 {i * PAGES_PER_CHUNK + 1}-{i * PAGES_PER_CHUNK + len(chunks[i])} 頁" for i, _ in failed_chunks]
+        warning = f"{'、'.join(ranges)}辨識失敗,以下結果可能不完整,請仔細核對並視需要手動補充"
+
+    data = results[0] if len(results) == 1 else _merge_extractions(results)
+    data = _drop_empty_entries(data)
+    return data, warning
+
+
+def _drop_empty_entries(data: dict) -> dict:
+    """Occasionally a chunk's response includes a degenerate entry - garbled text with
+    no parcel_number/building_number and no owners. A real 地號/建號 always has at
+    least one of those, so entries with neither carry no information and are almost
+    certainly noise; drop them rather than showing the user empty junk cards."""
+    data["land_parcels"] = [p for p in data["land_parcels"] if p.get("parcel_number") or p.get("owners")]
+    data["buildings"] = [b for b in data["buildings"] if b.get("building_number") or b.get("owners")]
+    return data
 
 
 def _merge_extractions(chunk_results: list[dict]) -> dict:
@@ -231,14 +288,15 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]]) -> dict:
         },
     }
 
-    # A single chunk occasionally times out under load even though most complete well
-    # under a minute - retry once before giving up rather than failing the whole
-    # (possibly multi-chunk) job over one slow call.
+    # A single chunk occasionally times out, or Gemini occasionally returns a
+    # truncated/malformed response, under load even though most calls complete cleanly
+    # well under a minute - retry the whole request once before giving up, rather than
+    # failing the whole (possibly multi-chunk) job over one bad call.
+    last_error: OcrError | None = None
     for attempt in (1, 2):
         try:
             resp = httpx.post(url, params={"key": settings.GEMINI_API_KEY}, json=payload, timeout=240.0)
             resp.raise_for_status()
-            break
         except httpx.HTTPStatusError as exc:
             detail = exc.response.text
             try:
@@ -247,27 +305,32 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]]) -> dict:
                 pass
             raise OcrError(f"呼叫 Gemini 服務失敗:{detail}") from exc
         except httpx.HTTPError as exc:
-            if attempt == 2:
-                raise OcrError(f"呼叫 Gemini 服務失敗:{exc}") from exc
+            last_error = OcrError(f"呼叫 Gemini 服務失敗:{exc}")
+            continue
 
-    data = resp.json()
-    candidates = data.get("candidates") or []
-    if not candidates:
-        block_reason = (data.get("promptFeedback") or {}).get("blockReason")
-        raise OcrError(f"Gemini 未回傳結果{'(原因:' + block_reason + ')' if block_reason else ''}")
+        data = resp.json()
+        candidates = data.get("candidates") or []
+        if not candidates:
+            block_reason = (data.get("promptFeedback") or {}).get("blockReason")
+            last_error = OcrError(f"Gemini 未回傳結果{'(原因:' + block_reason + ')' if block_reason else ''}")
+            continue
 
-    response_parts = candidates[0].get("content", {}).get("parts", [])
-    text = "".join(p.get("text", "") for p in response_parts)
-    if not text:
-        raise OcrError("Gemini 回傳內容為空")
+        response_parts = candidates[0].get("content", {}).get("parts", [])
+        text = "".join(p.get("text", "") for p in response_parts)
+        if not text:
+            last_error = OcrError("Gemini 回傳內容為空")
+            continue
 
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise OcrError(f"無法解析 Gemini 回傳的 JSON:{exc}") from exc
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            last_error = OcrError(f"無法解析 Gemini 回傳的 JSON:{exc}")
+            continue
 
-    return {
-        "land_parcels": parsed.get("land_parcels") or [],
-        "encumbrances": parsed.get("encumbrances") or [],
-        "buildings": parsed.get("buildings") or [],
-    }
+        return {
+            "land_parcels": parsed.get("land_parcels") or [],
+            "encumbrances": parsed.get("encumbrances") or [],
+            "buildings": parsed.get("buildings") or [],
+        }
+
+    raise last_error

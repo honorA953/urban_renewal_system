@@ -1832,6 +1832,11 @@ async function runTitleDeedOcr() {
     if (result.job.status !== "completed") {
       toast(result.job.error_message || "辨識失敗,請手動輸入各欄位", "error");
       titleDeedWizard.data = normalizeTitleDeedData(null);
+    } else if (result.job.error_message) {
+      // Completed, but part of a multi-chunk batch failed - the rest of the data is
+      // still usable, just possibly incomplete.
+      toast(result.job.error_message, "error");
+      titleDeedWizard.data = normalizeTitleDeedData(result.data);
     } else {
       titleDeedWizard.data = normalizeTitleDeedData(result.data);
       toast("辨識完成,請逐步核對每個區塊", "success");

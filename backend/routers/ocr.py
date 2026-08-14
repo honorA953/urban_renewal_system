@@ -72,7 +72,7 @@ def extract_title_deed_job(
         for doc in documents:
             with open(doc.file_path, "rb") as f:
                 file_payload.append((f.read(), doc.mime_type))
-        parsed = extract_title_deed(file_payload)
+        parsed, warning = extract_title_deed(file_payload)
     except (OcrError, OSError) as exc:
         job.status = "failed"
         job.error_message = str(exc)
@@ -84,7 +84,12 @@ def extract_title_deed_job(
     match = OcrMatchResult(ocr_job_id=job.id, extracted_data=parsed)
     db.add(match)
 
+    # Still "completed" - some pages were successfully extracted - but error_message
+    # carries a non-fatal warning when part of a multi-chunk batch failed, so the
+    # frontend can tell the user the result may be incomplete instead of silently
+    # under-reporting parcels/buildings.
     job.status = "completed"
+    job.error_message = warning
     job.completed_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(job)
