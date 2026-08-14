@@ -1182,12 +1182,13 @@ async function renderLandownersTab(el) {
                 ${
                   o.building_records.length
                     ? `<table>
-                        <thead><tr><th>建號</th><th>樓層</th><th>面積</th><th>持分</th>${isEditor() ? "<th>操作</th>" : ""}</tr></thead>
+                        <thead><tr><th>建號</th><th>座落地號</th><th>樓層</th><th>面積</th><th>持分</th>${isEditor() ? "<th>操作</th>" : ""}</tr></thead>
                         <tbody>
                           ${o.building_records
                             .map(
                               (br) => `<tr>
                                 <td>${escapeHtml(br.building_number) || "-"}</td>
+                                <td>${escapeHtml((o.land_records.find((lr) => lr.id === br.land_record_id) || {}).parcel_number) || "-"}</td>
                                 <td>${escapeHtml(br.floor) || "-"}</td>
                                 <td>${br.total_area_sqm}m²</td>
                                 <td>${br.ownership_numerator}/${br.ownership_denominator} (${br.ownership_share_pct}%)</td>
@@ -2329,6 +2330,11 @@ async function submitTitleDeedWizard() {
   btn.textContent = "建立中...";
   const pid = state.currentProjectId;
   const createdCache = new Map();
+  // Links a building record to the land record for the SAME owner on the matching
+  // 地號 (building.parcel_number), so 建物標示部's "地號" field isn't just descriptive
+  // text - it actually connects the two records in the data model.
+  const landRecordIdByParcelOwner = new Map();
+  const parcelOwnerKey = (parcelNumber, landownerId) => `${(parcelNumber || "").trim()}::${landownerId}`;
 
   try {
     if (!state.projectCache[pid]) state.projectCache[pid] = {};
@@ -2340,7 +2346,7 @@ async function submitTitleDeedWizard() {
       for (const owner of p.owners) {
         if (!owner.owner_name) continue;
         const landownerId = await findOrCreateLandownerByOwner(owner, createdCache);
-        await api(`/projects/${pid}/landowners/${landownerId}/land-records`, {
+        const created = await api(`/projects/${pid}/landowners/${landownerId}/land-records`, {
           method: "POST",
           body: {
             parcel_number: p.parcel_number,
@@ -2353,6 +2359,7 @@ async function submitTitleDeedWizard() {
             ownership_denominator: owner.ownership_denominator || 1,
           },
         });
+        landRecordIdByParcelOwner.set(parcelOwnerKey(p.parcel_number, landownerId), created.id);
       }
     }
 
@@ -2369,6 +2376,7 @@ async function submitTitleDeedWizard() {
         await api(`/projects/${pid}/landowners/${landownerId}/building-records`, {
           method: "POST",
           body: {
+            land_record_id: landRecordIdByParcelOwner.get(parcelOwnerKey(b.parcel_number, landownerId)) || null,
             building_number: b.building_number || null,
             address: b.building_address || null,
             floor: b.floor || null,

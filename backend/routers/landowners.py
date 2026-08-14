@@ -210,6 +210,8 @@ def create_building_record(
     current_user: User = Depends(require_staff_or_admin),
 ):
     get_landowner_or_404(db, project_id, landowner_id)
+    if payload.land_record_id is not None:
+        get_land_record_or_404(db, project_id, landowner_id, payload.land_record_id)
     record = BuildingRecord(project_id=project_id, landowner_id=landowner_id, **payload.model_dump())
     _compute_building_totals(record)
     db.add(record)
@@ -228,7 +230,10 @@ def update_building_record(
     current_user: User = Depends(require_staff_or_admin),
 ):
     record = get_building_record_or_404(db, project_id, landowner_id, record_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("land_record_id") is not None:
+        get_land_record_or_404(db, project_id, landowner_id, updates["land_record_id"])
+    for field, value in updates.items():
         setattr(record, field, value)
     _compute_building_totals(record)
     db.commit()

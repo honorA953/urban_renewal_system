@@ -43,6 +43,7 @@ class LandRecordRead(BaseModel):
 
 
 class BuildingRecordCreate(BaseModel):
+    land_record_id: int | None = None
     building_number: str | None = None
     address: str | None = None
     floor: str | None = None
@@ -56,6 +57,7 @@ class BuildingRecordCreate(BaseModel):
 
 
 class BuildingRecordUpdate(BaseModel):
+    land_record_id: int | None = None
     building_number: str | None = None
     address: str | None = None
     floor: str | None = None
@@ -71,6 +73,7 @@ class BuildingRecordUpdate(BaseModel):
 class BuildingRecordRead(BaseModel):
     id: int
     landowner_id: int | None = None
+    land_record_id: int | None = None
     building_number: str | None = None
     address: str | None = None
     floor: str | None = None
