@@ -1673,7 +1673,7 @@ const PING_PER_SQM = 0.3025;
 let titleDeedWizard = null;
 
 function openTitleDeedWizard() {
-  titleDeedWizard = { files: [], step: 0, data: null, activeType: null, activeIndex: null };
+  titleDeedWizard = { files: [], pages: [], step: 0, data: null, activeType: null, activeIndex: null };
   renderWizardStep0();
 }
 
@@ -1760,6 +1760,7 @@ function renderWizardStep0() {
     <div class="helper-text">若有多張照片或多頁,請用下方的 ▲▼ 調整順序,順序需與謄本頁面順序一致</div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+      <button type="button" class="btn-secondary" id="wizard-manual-group-btn">手動分組後再辨識</button>
       <button type="button" class="btn-primary" id="wizard-start-ocr-btn">開始辨識</button>
     </div>`,
     { width: "560px" }
@@ -1773,6 +1774,7 @@ function renderWizardStep0() {
     renderWizardFileList();
   });
   document.getElementById("wizard-start-ocr-btn").addEventListener("click", runTitleDeedOcr);
+  document.getElementById("wizard-manual-group-btn").addEventListener("click", runTitleDeedSplitAndGroup);
 }
 
 function renderWizardFileList() {
@@ -1850,6 +1852,122 @@ async function runTitleDeedOcr() {
   }
 }
 
+/* ---- Manual grouping: split every page first, let the user mark which pages belong
+   together (one 地號/建號's pages), then OCR each group separately instead of letting
+   the model guess where the boundaries are across a mixed batch. ---- */
+
+function base64ToBlob(base64, mime) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+async function runTitleDeedSplitAndGroup() {
+  if (!titleDeedWizard.files.length) {
+    toast("請先選擇至少一個檔案", "error");
+    return;
+  }
+  const btn = document.getElementById("wizard-manual-group-btn");
+  btn.disabled = true;
+  btn.textContent = "拆解頁面中...";
+  try {
+    const fd = new FormData();
+    titleDeedWizard.files.forEach((f) => fd.append("files", f));
+    const pages = await api(`/projects/${state.currentProjectId}/ocr/split-pages`, { method: "POST", body: fd, isForm: true });
+    titleDeedWizard.pages = pages.map((p) => ({ ...p, group: 1 }));
+    renderWizardStepGrouping();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "手動分組後再辨識";
+  }
+}
+
+function renderWizardStepGrouping() {
+  const pages = titleDeedWizard.pages;
+  openModal(
+    "掃描謄本匯入 · 手動分組",
+    `
+    <div class="helper-text" style="margin-bottom:10px">
+      每張縮圖下方填「分組編號」,同一編號的頁面會合成一組一起送出辨識,不同組會分開各自辨識,避免不同地號/建號的內容被混在一起。預設全部是第 1 組。
+    </div>
+    <div id="wizard-page-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;max-height:420px;overflow-y:auto;padding:4px"></div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="renderWizardStep0()">上一步</button>
+      <button type="button" class="btn-primary" id="wizard-grouped-ocr-btn">開始辨識</button>
+    </div>`,
+    { width: "700px" }
+  );
+
+  const grid = document.getElementById("wizard-page-grid");
+  grid.innerHTML = pages
+    .map(
+      (p, i) => `
+      <div class="record-row" style="padding:6px;text-align:center">
+        <img src="data:${p.mime_type};base64,${p.image_base64}" style="width:100%;height:110px;object-fit:cover;border-radius:4px;border:1px solid var(--border)">
+        <div class="helper-text" style="margin:4px 0 2px">第 ${p.page_number} 頁</div>
+        <input type="number" min="1" value="${p.group}" data-page-group="${i}" style="width:100%;text-align:center" autocomplete="off">
+      </div>`
+    )
+    .join("");
+
+  grid.querySelectorAll("[data-page-group]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const i = Number(input.dataset.pageGroup);
+      titleDeedWizard.pages[i].group = Math.max(1, Number(input.value) || 1);
+      input.value = titleDeedWizard.pages[i].group;
+    });
+  });
+
+  document.getElementById("wizard-grouped-ocr-btn").addEventListener("click", runGroupedTitleDeedOcr);
+}
+
+async function runGroupedTitleDeedOcr() {
+  const btn = document.getElementById("wizard-grouped-ocr-btn");
+  btn.disabled = true;
+
+  const groupNumbers = [...new Set(titleDeedWizard.pages.map((p) => p.group))].sort((a, b) => a - b);
+  const combined = { parcels: [], buildings: [], encumbrances: [] };
+  const failedGroups = [];
+
+  try {
+    for (let g = 0; g < groupNumbers.length; g++) {
+      const groupNumber = groupNumbers[g];
+      btn.textContent = `辨識中(第 ${g + 1}/${groupNumbers.length} 組)...`;
+      const groupPages = titleDeedWizard.pages.filter((p) => p.group === groupNumber);
+      const fd = new FormData();
+      groupPages.forEach((p, i) => fd.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${p.page_number}.png`));
+
+      try {
+        const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
+        if (result.job.status !== "completed") {
+          failedGroups.push(groupNumber);
+          continue;
+        }
+        if (result.job.error_message) failedGroups.push(groupNumber);
+        const normalized = normalizeTitleDeedData(result.data);
+        combined.parcels.push(...normalized.parcels);
+        combined.buildings.push(...normalized.buildings);
+        combined.encumbrances.push(...normalized.encumbrances);
+      } catch (err) {
+        failedGroups.push(groupNumber);
+      }
+    }
+
+    titleDeedWizard.data = combined;
+    if (failedGroups.length) {
+      toast(`第 ${failedGroups.join("、")} 組辨識失敗或不完整,請手動核對補充`, "error");
+    } else {
+      toast("分組辨識完成,請逐步核對每個區塊", "success");
+    }
+    titleDeedWizard.step = 1;
+    renderWizardStep();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "開始辨識";
+  }
+}
+
 /* ---- Step 1: 總覽(偵測到的地號/建號/他項權利清單) ---- */
 
 function blankParcel() {
@@ -1866,6 +1984,7 @@ function renderWizardStepOverview() {
     "掃描謄本匯入",
     `
     ${wizardProgressHtml("總覽 · 確認偵測到的地號/建號,可逐筆編輯、刪除或手動新增")}
+    <div class="final-banner warning" style="margin-bottom:14px">⚠ AI 辨識僅供參考,姓名、地址等文字有可能被誤認或臆測,請務必逐筆對照原始掃描件後再建立</div>
     <div class="helper-text" style="font-weight:600">土地地號(${d.parcels.length})</div>
     <div id="wizard-parcel-list" style="margin:6px 0"></div>
     <button type="button" class="btn-secondary btn-sm" id="wizard-add-parcel-btn">+ 新增地號</button>
@@ -2252,6 +2371,7 @@ function renderWizardStepConfirm() {
     "掃描謄本匯入",
     `
     ${wizardProgressHtml("確認建立")}
+    <div class="final-banner warning" style="margin-bottom:14px">⚠ 建立前最後確認:以下姓名、地址、面積等內容為 AI 辨識結果,可能有誤或臆測,請務必已逐筆對照原始掃描件</div>
     <div class="helper-text" style="font-weight:600">土地地號(${d.parcels.length})</div>
     ${parcelsHtml}
     <div class="helper-text" style="font-weight:600;margin-top:16px">建物建號(${d.buildings.length})</div>

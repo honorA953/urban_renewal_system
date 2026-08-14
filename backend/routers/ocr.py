@@ -1,6 +1,7 @@
+import base64
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,9 +12,9 @@ from models.ocr import OcrJob, OcrMatchResult
 from models.ocr_job_document import OcrJobDocument
 from models.user import User
 from routers.projects import get_project_or_404
-from schemas.ocr import OcrExtractionResult, OcrJobRead, TitleDeedExtraction
+from schemas.ocr import OcrExtractionResult, OcrJobRead, PagePreview, TitleDeedExtraction
 from utils.file_storage import build_upload_path
-from utils.ocr import OcrError, extract_title_deed
+from utils.ocr import OcrError, _flatten_to_pages, extract_title_deed
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["ocr"])
 
@@ -26,6 +27,29 @@ def list_ocr_jobs(
 ):
     get_project_or_404(db, project_id)
     return db.scalars(select(OcrJob).where(OcrJob.project_id == project_id).order_by(OcrJob.created_at.desc())).all()
+
+
+@router.post("/ocr/split-pages", response_model=list[PagePreview])
+def split_pages_for_grouping(
+    project_id: int,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_staff_or_admin),
+):
+    """Splits any uploaded PDFs into per-page images (reusing the same logic the OCR
+    call itself uses) and returns them as previews, without persisting anything. Lets
+    the wizard's manual grouping step show every page before the user decides which
+    ones to send together for extraction."""
+    get_project_or_404(db, project_id)
+    file_payload = [(upload.file.read(), upload.content_type) for upload in files]
+    try:
+        pages = _flatten_to_pages(file_payload)
+    except OcrError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return [
+        PagePreview(page_number=i + 1, image_base64=base64.b64encode(content).decode("ascii"), mime_type=mime_type or "image/png")
+        for i, (content, mime_type) in enumerate(pages)
+    ]
 
 
 @router.post("/ocr/title-deed", response_model=OcrExtractionResult, status_code=status.HTTP_201_CREATED)

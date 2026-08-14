@@ -75,3 +75,13 @@ class TitleDeedExtraction(BaseModel):
 class OcrExtractionResult(BaseModel):
     job: OcrJobRead
     data: TitleDeedExtraction | None = None
+
+
+class PagePreview(BaseModel):
+    """One page from an uploaded file/PDF, pre-split for the wizard's manual grouping
+    step - lets the user see every page and decide which ones belong together before
+    any of them are sent for extraction."""
+
+    page_number: int
+    image_base64: str
+    mime_type: str = "image/png"

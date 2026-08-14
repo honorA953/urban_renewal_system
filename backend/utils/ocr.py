@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 
 import fitz
 import httpx
@@ -316,7 +317,9 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]]) -> dict:
     # A single chunk occasionally times out, or the model occasionally returns a
     # truncated/malformed response, under load even though most calls complete cleanly
     # well under a minute - retry the whole request once before giving up, rather than
-    # failing the whole (possibly multi-chunk) job over one bad call.
+    # failing the whole (possibly multi-chunk) job over one bad call. A 429 (rate
+    # limit) gets a longer backoff since OpenAI's per-minute token windows take real
+    # time to free up - a same-instant retry just hits the same wall.
     last_error: OcrError | None = None
     for attempt in (1, 2):
         try:
@@ -328,6 +331,10 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]]) -> dict:
                 detail = exc.response.json().get("error", {}).get("message", detail)
             except ValueError:
                 pass
+            if exc.response.status_code == 429 and attempt == 1:
+                last_error = OcrError(f"呼叫 OpenAI 服務失敗:{detail}")
+                time.sleep(20.0)
+                continue
             raise OcrError(f"呼叫 OpenAI 服務失敗:{detail}") from exc
         except httpx.HTTPError as exc:
             last_error = OcrError(f"呼叫 OpenAI 服務失敗:{exc}")
