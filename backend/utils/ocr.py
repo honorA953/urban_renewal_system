@@ -6,8 +6,7 @@ import httpx
 
 from config import settings
 
-GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-OLLAMA_CHAT_ENDPOINT = "{base_url}/api/chat"
+OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 
 EXTRACTION_PROMPT = """你是台灣地政士助理。使用者會依序提供 1 到多張圖片或 PDF,這些是同一份謄本文件的連續頁面。\
 這份文件可能是「單一地號/建號」的謄本,也可能是「批次謄本」——同一份文件裡連續印著好幾筆不同地號、好幾筆不同建號\
@@ -65,87 +64,15 @@ owners 陣列裡,不可遺漏任何一位。
 
 找不到、看不清楚、或文件上沒有的欄位一律填 null(陣列則填空陣列 []),絕對不要用臆測值填補。"""
 
-LAND_OWNER_ITEM_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {
-        "registration_order": {"type": "STRING", "nullable": True},
-        "owner_name": {"type": "STRING", "nullable": True},
-        "id_number": {"type": "STRING", "nullable": True},
-        "ownership_numerator": {"type": "INTEGER", "nullable": True},
-        "ownership_denominator": {"type": "INTEGER", "nullable": True},
-        "address": {"type": "STRING", "nullable": True},
-    },
-}
-
-BUILDING_OWNER_ITEM_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {
-        "registration_order": {"type": "STRING", "nullable": True},
-        "owner_name": {"type": "STRING", "nullable": True},
-        "ownership_numerator": {"type": "INTEGER", "nullable": True},
-        "ownership_denominator": {"type": "INTEGER", "nullable": True},
-        "address": {"type": "STRING", "nullable": True},
-    },
-}
-
-RESPONSE_SCHEMA = {
-    "type": "OBJECT",
-    "properties": {
-        "land_parcels": {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "township": {"type": "STRING", "nullable": True},
-                    "section": {"type": "STRING", "nullable": True},
-                    "subsection": {"type": "STRING", "nullable": True},
-                    "parcel_number": {"type": "STRING", "nullable": True},
-                    "area_sqm": {"type": "NUMBER", "nullable": True},
-                    "owners": {"type": "ARRAY", "items": LAND_OWNER_ITEM_SCHEMA},
-                },
-            },
-        },
-        "encumbrances": {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "registration_order": {"type": "STRING", "nullable": True},
-                    "applies_to_parcels": {"type": "STRING", "nullable": True},
-                    "right_type": {"type": "STRING", "nullable": True},
-                    "right_holder": {"type": "STRING", "nullable": True},
-                    "debtor_info": {"type": "STRING", "nullable": True},
-                },
-            },
-        },
-        "buildings": {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "building_number": {"type": "STRING", "nullable": True},
-                    "building_address": {"type": "STRING", "nullable": True},
-                    "parcel_number": {"type": "STRING", "nullable": True},
-                    "total_floors": {"type": "STRING", "nullable": True},
-                    "floor": {"type": "STRING", "nullable": True},
-                    "total_area_sqm": {"type": "NUMBER", "nullable": True},
-                    "floor_area_sqm": {"type": "NUMBER", "nullable": True},
-                    "owners": {"type": "ARRAY", "items": BUILDING_OWNER_ITEM_SCHEMA},
-                },
-            },
-        },
-    },
-    "required": ["land_parcels", "encumbrances", "buildings"],
-}
-
 
 def _n(json_type: str) -> dict:
-    """A nullable field in standard JSON Schema (Ollama's structured-output dialect) -
-    unlike Gemini's OpenAPI-subset schema above which uses `"nullable": True`."""
+    """A nullable field in standard JSON Schema. OpenAI's structured-output "strict"
+    mode requires every property (including ones that may be null) to appear in the
+    object's "required" list - the type itself carries the nullability."""
     return {"type": [json_type, "null"]}
 
 
-_OLLAMA_LAND_OWNER_ITEM_SCHEMA = {
+_LAND_OWNER_ITEM_SCHEMA = {
     "type": "object",
     "properties": {
         "registration_order": _n("string"),
@@ -155,9 +82,11 @@ _OLLAMA_LAND_OWNER_ITEM_SCHEMA = {
         "ownership_denominator": _n("integer"),
         "address": _n("string"),
     },
+    "required": ["registration_order", "owner_name", "id_number", "ownership_numerator", "ownership_denominator", "address"],
+    "additionalProperties": False,
 }
 
-_OLLAMA_BUILDING_OWNER_ITEM_SCHEMA = {
+_BUILDING_OWNER_ITEM_SCHEMA = {
     "type": "object",
     "properties": {
         "registration_order": _n("string"),
@@ -166,9 +95,11 @@ _OLLAMA_BUILDING_OWNER_ITEM_SCHEMA = {
         "ownership_denominator": _n("integer"),
         "address": _n("string"),
     },
+    "required": ["registration_order", "owner_name", "ownership_numerator", "ownership_denominator", "address"],
+    "additionalProperties": False,
 }
 
-OLLAMA_RESPONSE_SCHEMA = {
+RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
         "land_parcels": {
@@ -181,8 +112,10 @@ OLLAMA_RESPONSE_SCHEMA = {
                     "subsection": _n("string"),
                     "parcel_number": _n("string"),
                     "area_sqm": _n("number"),
-                    "owners": {"type": "array", "items": _OLLAMA_LAND_OWNER_ITEM_SCHEMA},
+                    "owners": {"type": "array", "items": _LAND_OWNER_ITEM_SCHEMA},
                 },
+                "required": ["township", "section", "subsection", "parcel_number", "area_sqm", "owners"],
+                "additionalProperties": False,
             },
         },
         "encumbrances": {
@@ -196,6 +129,8 @@ OLLAMA_RESPONSE_SCHEMA = {
                     "right_holder": _n("string"),
                     "debtor_info": _n("string"),
                 },
+                "required": ["registration_order", "applies_to_parcels", "right_type", "right_holder", "debtor_info"],
+                "additionalProperties": False,
             },
         },
         "buildings": {
@@ -210,12 +145,24 @@ OLLAMA_RESPONSE_SCHEMA = {
                     "floor": _n("string"),
                     "total_area_sqm": _n("number"),
                     "floor_area_sqm": _n("number"),
-                    "owners": {"type": "array", "items": _OLLAMA_BUILDING_OWNER_ITEM_SCHEMA},
+                    "owners": {"type": "array", "items": _BUILDING_OWNER_ITEM_SCHEMA},
                 },
+                "required": [
+                    "building_number",
+                    "building_address",
+                    "parcel_number",
+                    "total_floors",
+                    "floor",
+                    "total_area_sqm",
+                    "floor_area_sqm",
+                    "owners",
+                ],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["land_parcels", "encumbrances", "buildings"],
+    "additionalProperties": False,
 }
 
 
@@ -223,26 +170,18 @@ class OcrError(Exception):
     """Raised when the OCR/extraction provider cannot be reached or returns an error."""
 
 
-# Empirically, asking Gemini to read a whole large batch (~27+ pages) in a single
-# request causes it to degenerate into repeating garbage tokens instead of real data
-# (confirmed by testing against a real 27-page batch deed - 8 pages in one call
-# produced clean results, 27 pages in one call did not). Splitting into small chunks
-# and merging the results client-side keeps each individual call well within whatever
-# limit causes that breakdown.
+# Asking a vision model to read a whole large batch (dozens of pages) in a single
+# request risks degenerate/truncated output - splitting into small chunks and merging
+# the results client-side keeps each individual call comfortably sized.
 PAGES_PER_CHUNK = 8
-# A local 7B-class vision model has much less capacity than Gemini Flash to reliably
-# track multiple pages at once - one page per call keeps each call's job simple, and
-# the same parcel/building merge logic below still stitches a multi-page owner list
-# back together across calls.
-OLLAMA_PAGES_PER_CHUNK = 1
 PDF_RENDER_DPI = 200
 
 
 def _expand_pdf_pages(content: bytes) -> list[tuple[bytes, str | None]]:
     """Splits a multi-page PDF into one page-image per page. Chunking has to operate on
     actual pages, not uploaded files - a single 27-page PDF is still just 1 "file", so
-    without this a whole batch deed uploaded as one PDF would still be sent to Gemini in
-    one request and hit the same quality breakdown chunking is meant to avoid."""
+    without this a whole batch deed uploaded as one PDF would still be sent in one
+    request and hit the same quality breakdown chunking is meant to avoid."""
     try:
         doc = fitz.open(stream=content, filetype="pdf")
         pages = [(page.get_pixmap(dpi=PDF_RENDER_DPI).tobytes("png"), "image/png") for page in doc]
@@ -264,38 +203,29 @@ def _flatten_to_pages(files: list[tuple[bytes, str | None]]) -> list[tuple[bytes
 
 
 def extract_title_deed(files: list[tuple[bytes, str | None]]) -> tuple[dict, str | None]:
-    """Sends 1+ scanned pages (in the given order) to Gemini (Google AI Studio) and asks
-    it to return the title-deed sections as structured JSON. The pages may be a single
-    地號/建號's title deed, or a batch covering many parcels/buildings - either shape is
-    returned as land_parcels/buildings arrays. Multi-page PDFs are first split into
-    per-page images, then large page counts are processed in chunks of PAGES_PER_CHUNK
-    and merged (by parcel_number / building_number) to avoid per-request quality
-    breakdown. Each chunk already retries once internally on failure; if a chunk still
-    fails, the other chunks' results are kept and a warning is returned alongside the
-    data instead of discarding everything. Returns (data, warning_message_or_None).
-    Every field is a suggestion for the user to review before saving, not authoritative."""
-    provider = settings.OCR_PROVIDER
-    if provider == "gemini":
-        if not settings.GEMINI_API_KEY:
-            raise OcrError("尚未設定 GEMINI_API_KEY,請聯絡系統管理員設定 OCR 金鑰後再試")
-        chunk_fn, pages_per_chunk = _extract_title_deed_chunk_gemini, PAGES_PER_CHUNK
-    elif provider == "ollama":
-        if not settings.OLLAMA_BASE_URL:
-            raise OcrError("尚未設定 OLLAMA_BASE_URL,請聯絡系統管理員設定後再試")
-        chunk_fn, pages_per_chunk = _extract_title_deed_chunk_ollama, OLLAMA_PAGES_PER_CHUNK
-    else:
-        raise OcrError(f"未知的 OCR_PROVIDER 設定:{provider}")
+    """Sends 1+ scanned pages (in the given order) to OpenAI and asks it to return the
+    title-deed sections as structured JSON. The pages may be a single 地號/建號's title
+    deed, or a batch covering many parcels/buildings - either shape is returned as
+    land_parcels/buildings arrays. Multi-page PDFs are first split into per-page images,
+    then large page counts are processed in chunks of PAGES_PER_CHUNK and merged (by
+    parcel_number / building_number) to avoid per-request quality breakdown. Each chunk
+    already retries once internally on failure; if a chunk still fails, the other
+    chunks' results are kept and a warning is returned alongside the data instead of
+    discarding everything. Returns (data, warning_message_or_None). Every field is a
+    suggestion for the user to review before saving, not an authoritative value."""
+    if not settings.OPENAI_API_KEY:
+        raise OcrError("尚未設定 OPENAI_API_KEY,請聯絡系統管理員設定 OCR 金鑰後再試")
     if not files:
         raise OcrError("沒有可供辨識的檔案")
 
     pages = _flatten_to_pages(files)
-    chunks = [pages[i : i + pages_per_chunk] for i in range(0, len(pages), pages_per_chunk)]
+    chunks = [pages[i : i + PAGES_PER_CHUNK] for i in range(0, len(pages), PAGES_PER_CHUNK)]
 
     results = []
     failed_chunks = []
     for i, chunk in enumerate(chunks):
         try:
-            results.append(chunk_fn(chunk))
+            results.append(_extract_title_deed_chunk(chunk))
         except OcrError as exc:
             failed_chunks.append((i, exc))
 
@@ -304,7 +234,7 @@ def extract_title_deed(files: list[tuple[bytes, str | None]]) -> tuple[dict, str
 
     warning = None
     if failed_chunks:
-        ranges = [f"第 {i * pages_per_chunk + 1}-{i * pages_per_chunk + len(chunks[i])} 頁" for i, _ in failed_chunks]
+        ranges = [f"第 {i * PAGES_PER_CHUNK + 1}-{i * PAGES_PER_CHUNK + len(chunks[i])} 頁" for i, _ in failed_chunks]
         warning = f"{'、'.join(ranges)}辨識失敗,以下結果可能不完整,請仔細核對並視需要手動補充"
 
     data = results[0] if len(results) == 1 else _merge_extractions(results)
@@ -358,39 +288,39 @@ def _merge_extractions(chunk_results: list[dict]) -> dict:
     return {"land_parcels": land_parcels, "encumbrances": encumbrances, "buildings": buildings}
 
 
-def _extract_title_deed_chunk_gemini(files: list[tuple[bytes, str | None]]) -> dict:
-    parts = [{"text": EXTRACTION_PROMPT}]
+def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]]) -> dict:
+    content_parts = [{"type": "text", "text": EXTRACTION_PROMPT}]
     for content, mime_type in files:
-        parts.append(
+        b64 = base64.b64encode(content).decode("ascii")
+        content_parts.append(
             {
-                "inline_data": {
-                    "mime_type": mime_type or "image/jpeg",
-                    "data": base64.b64encode(content).decode("ascii"),
-                }
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime_type or 'image/jpeg'};base64,{b64}"},
             }
         )
 
-    url = GEMINI_ENDPOINT.format(model=settings.GEMINI_MODEL)
     payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": RESPONSE_SCHEMA,
-            # Batch title deeds can contain dozens of parcels/buildings, each with many
-            # co-owners - the resulting JSON can be far larger than a single-parcel
-            # extraction, so raise the cap to avoid a truncated (invalid) response.
-            "maxOutputTokens": 65536,
+        "model": settings.OPENAI_MODEL,
+        "messages": [{"role": "user", "content": content_parts}],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "title_deed_extraction", "strict": True, "schema": RESPONSE_SCHEMA},
         },
+        # Batch title deeds can contain dozens of parcels/buildings, each with many
+        # co-owners - the resulting JSON can be far larger than a single-parcel
+        # extraction, so raise the cap to avoid a truncated (invalid) response.
+        "max_tokens": 16384,
     }
+    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
 
-    # A single chunk occasionally times out, or Gemini occasionally returns a
+    # A single chunk occasionally times out, or the model occasionally returns a
     # truncated/malformed response, under load even though most calls complete cleanly
     # well under a minute - retry the whole request once before giving up, rather than
     # failing the whole (possibly multi-chunk) job over one bad call.
     last_error: OcrError | None = None
     for attempt in (1, 2):
         try:
-            resp = httpx.post(url, params={"key": settings.GEMINI_API_KEY}, json=payload, timeout=240.0)
+            resp = httpx.post(OPENAI_ENDPOINT, headers=headers, json=payload, timeout=240.0)
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             detail = exc.response.text
@@ -398,93 +328,30 @@ def _extract_title_deed_chunk_gemini(files: list[tuple[bytes, str | None]]) -> d
                 detail = exc.response.json().get("error", {}).get("message", detail)
             except ValueError:
                 pass
-            raise OcrError(f"呼叫 Gemini 服務失敗:{detail}") from exc
+            raise OcrError(f"呼叫 OpenAI 服務失敗:{detail}") from exc
         except httpx.HTTPError as exc:
-            last_error = OcrError(f"呼叫 Gemini 服務失敗:{exc}")
+            last_error = OcrError(f"呼叫 OpenAI 服務失敗:{exc}")
             continue
 
         data = resp.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
-            block_reason = (data.get("promptFeedback") or {}).get("blockReason")
-            last_error = OcrError(f"Gemini 未回傳結果{'(原因:' + block_reason + ')' if block_reason else ''}")
+        choices = data.get("choices") or []
+        if not choices:
+            last_error = OcrError("OpenAI 未回傳結果")
             continue
 
-        response_parts = candidates[0].get("content", {}).get("parts", [])
-        text = "".join(p.get("text", "") for p in response_parts)
+        finish_reason = choices[0].get("finish_reason")
+        text = (choices[0].get("message") or {}).get("content") or ""
         if not text:
-            last_error = OcrError("Gemini 回傳內容為空")
+            last_error = OcrError("OpenAI 回傳內容為空")
+            continue
+        if finish_reason == "length":
+            last_error = OcrError("OpenAI 回傳內容被截斷(超過長度上限)")
             continue
 
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
-            last_error = OcrError(f"無法解析 Gemini 回傳的 JSON:{exc}")
-            continue
-
-        return {
-            "land_parcels": parsed.get("land_parcels") or [],
-            "encumbrances": parsed.get("encumbrances") or [],
-            "buildings": parsed.get("buildings") or [],
-        }
-
-    raise last_error
-
-
-def _extract_title_deed_chunk_ollama(files: list[tuple[bytes, str | None]]) -> dict:
-    url = OLLAMA_CHAT_ENDPOINT.format(base_url=settings.OLLAMA_BASE_URL.rstrip("/"))
-    payload = {
-        "model": settings.OLLAMA_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": EXTRACTION_PROMPT,
-                "images": [base64.b64encode(content).decode("ascii") for content, _ in files],
-            }
-        ],
-        "format": OLLAMA_RESPONSE_SCHEMA,
-        "stream": False,
-        "options": {
-            # The long extraction prompt plus a full-page image's vision tokens
-            # comfortably exceed Ollama's 4096-token default context window (measured
-            # ~5300 tokens for one page), which otherwise fails with a 400 "exceeds
-            # context size" error. num_predict also needs headroom - a deed page with
-            # several owners easily produces a few hundred output tokens.
-            "num_ctx": 16384,
-            "num_predict": 4096,
-        },
-    }
-
-    # Local inference on a laptop GPU is much slower and less predictable than a
-    # hosted API - generous timeout, and the same retry-once-on-any-failure pattern
-    # used for Gemini above.
-    last_error: OcrError | None = None
-    for attempt in (1, 2):
-        try:
-            resp = httpx.post(url, json=payload, timeout=300.0)
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text
-            try:
-                detail = exc.response.json().get("error", detail)
-            except ValueError:
-                pass
-            last_error = OcrError(f"呼叫 Ollama 服務失敗:{detail}")
-            continue
-        except httpx.HTTPError as exc:
-            last_error = OcrError(f"呼叫 Ollama 服務失敗(請確認 Ollama 已啟動且已下載 {settings.OLLAMA_MODEL} 模型):{exc}")
-            continue
-
-        data = resp.json()
-        text = (data.get("message") or {}).get("content") or ""
-        if not text:
-            last_error = OcrError("Ollama 回傳內容為空")
-            continue
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError as exc:
-            last_error = OcrError(f"無法解析 Ollama 回傳的 JSON:{exc}")
+            last_error = OcrError(f"無法解析 OpenAI 回傳的 JSON:{exc}")
             continue
 
         return {

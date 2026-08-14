@@ -41,16 +41,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS}
       ALERT_UNCONTACTED_DAYS: ${ALERT_UNCONTACTED_DAYS}
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_MODEL: ${GEMINI_MODEL}
-      OCR_PROVIDER: ${OCR_PROVIDER:-gemini}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5vl:7b}
-    extra_hosts:
-      # Docker Desktop already provides this on Windows/Mac, but declaring it
-      # explicitly keeps `host.docker.internal` working the same way if this ever runs
-      # under Linux Docker Engine too.
-      - "host.docker.internal:host-gateway"
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL}
     volumes:
       - ./backend:/app
       - ./uploads:/app/uploads

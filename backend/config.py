@@ -26,15 +26,8 @@ class Settings(BaseSettings):
 
     ADMIN_INITIAL_PASSWORD: str = "Admin@2026"
 
-    GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-flash-latest"
-
-    # Alternative OCR provider - runs locally via Ollama instead of calling Gemini.
-    # Only meaningful for local dev (the NAS deployment has no GPU); see
-    # backend/utils/ocr.py for how this is used.
-    OCR_PROVIDER: str = "gemini"
-    OLLAMA_BASE_URL: str = "http://host.docker.internal:11434"
-    OLLAMA_MODEL: str = "qwen2.5vl:7b"
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o"
 
     @property
     def database_url(self) -> str:

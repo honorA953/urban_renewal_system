@@ -18,6 +18,14 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        # Explicit rollback before close, rather than relying solely on close()'s
+        # implicit rollback - a request that fails mid-transaction (e.g. blocked on a
+        # row lock from another session, then errors out) must not leave the pooled
+        # connection idle-in-transaction still holding that lock for the next request
+        # that reuses it.
+        db.rollback()
+        raise
     finally:
         db.close()
 

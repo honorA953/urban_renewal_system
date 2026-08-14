@@ -35,10 +35,10 @@ def extract_title_deed_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_staff_or_admin),
 ):
-    """Runs structured five-section extraction on 1+ scanned pages of a single 土地登記
-    謄本 (images or PDFs, in the given order), synchronously via Gemini. Every uploaded
-    page is also saved as a project document for traceability. The result is a
-    best-effort suggestion for the frontend's step-by-step review wizard."""
+    """Runs structured extraction on 1+ scanned pages of a title deed (images or PDFs,
+    in the given order), synchronously via OpenAI. Every uploaded page is also saved as
+    a project document for traceability. The result is a best-effort suggestion for the
+    frontend's step-by-step review wizard."""
     project = get_project_or_404(db, project_id)
 
     job = OcrJob(project_id=project_id, status="processing", job_type="title_deed")
