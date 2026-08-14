@@ -1001,13 +1001,30 @@ function openDeleteProjectModal(project) {
   });
 }
 
-document.getElementById("new-project-btn").addEventListener("click", () => {
+async function suggestNextProjectCode() {
+  const year = new Date().getFullYear();
+  let maxSeq = 0;
+  try {
+    const projects = await api("/projects", { silent: true });
+    const prefix = `${year}-`;
+    projects.forEach((p) => {
+      if (p.project_code && p.project_code.startsWith(prefix)) {
+        const seq = Number(p.project_code.slice(prefix.length));
+        if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
+      }
+    });
+  } catch (e) {}
+  return `${year}-${String(maxSeq + 1).padStart(3, "0")}`;
+}
+
+document.getElementById("new-project-btn").addEventListener("click", async () => {
+  const suggestedCode = await suggestNextProjectCode();
   openModal(
     "新增案件",
     `
     <form id="project-form">
       <div class="field-row">
-        <div class="field"><label>案件代碼</label><input name="project_code" required></div>
+        <div class="field"><label>案件代碼</label><input name="project_code" value="${escapeHtml(suggestedCode)}" required></div>
         <div class="field"><label>案件名稱</label><input name="name" required></div>
       </div>
       <div class="field-row">
