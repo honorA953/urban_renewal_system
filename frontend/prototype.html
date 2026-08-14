@@ -2479,6 +2479,16 @@ async function submitTitleDeedWizard() {
       state.projectCache[pid].landowners = await api(`/projects/${pid}/landowners`);
     }
 
+    // Seed from land records that already exist in the project (e.g. from an earlier
+    // wizard run that only scanned the 土地謄本) - otherwise a building-only run today
+    // would never find a match, since it'd only ever look at parcels created in this
+    // same submission.
+    for (const owner of state.projectCache[pid].landowners) {
+      for (const lr of owner.land_records || []) {
+        landRecordIdByParcelOwner.set(parcelOwnerKey(lr.parcel_number, owner.id), lr.id);
+      }
+    }
+
     for (const p of d.parcels) {
       for (const owner of p.owners) {
         if (!owner.owner_name) continue;
