@@ -1,9 +1,11 @@
 import base64
+import io
 import json
 import time
 
 import fitz
 import httpx
+from PIL import Image
 
 from config import settings
 
@@ -517,6 +519,27 @@ def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[int]
 # 地號/建號 differs page to page - that's the signal used here to guess which pages
 # belong together, analogous to how detect_page_groups() uses the 續次頁 marker one
 # level down (per parcel/building instead of per case).
+#
+# The title is always at the very top of the page, so unlike continuation detection
+# (where the marker's position varies with how much content is on the page), case
+# detection only ever needs to look at a small strip - cropping to it cuts the image
+# size (and therefore upload time, processing time, and token/rate-limit pressure) by
+# roughly 6-7x with no loss of the information this prompt actually needs.
+CASE_DETECTION_CROP_FRACTION = 0.15
+
+
+def _crop_top_strip(content: bytes, fraction: float = CASE_DETECTION_CROP_FRACTION) -> bytes:
+    try:
+        img = Image.open(io.BytesIO(content))
+        img.load()
+    except Exception:
+        return content  # not a decodable raster image - fall back to sending it whole
+    width, height = img.size
+    cropped = img.crop((0, 0, width, max(1, int(height * fraction))))
+    buf = io.BytesIO()
+    cropped.convert("RGB").save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
 
 CASE_LOCATION_PROMPT = """以下是依序排列的台灣土地/建物登記謄本頁面。每一頁最上方的標題通常是兩行:\
 第一行是文件類型(例如「土地登記第三類謄本(地號全部)」或「建物登記第三類謄本(建物全部)」),第二行是\
@@ -561,8 +584,9 @@ def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[t
     legitimately share one case)."""
     content_parts = [{"type": "text", "text": CASE_LOCATION_PROMPT}]
     for content, mime_type in files:
-        b64 = base64.b64encode(content).decode("ascii")
-        content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime_type or 'image/jpeg'};base64,{b64}"}})
+        cropped = _crop_top_strip(content)
+        b64 = base64.b64encode(cropped).decode("ascii")
+        content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
 
     payload = {
         "model": settings.OPENAI_MODEL,
