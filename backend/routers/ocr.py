@@ -13,7 +13,7 @@ from models.ocr import OcrJob, OcrMatchResult
 from models.ocr_job_document import OcrJobDocument
 from models.user import User
 from routers.projects import get_project_or_404
-from schemas.ocr import OcrExtractionResult, OcrJobRead, PagePreview, TitleDeedExtraction
+from schemas.ocr import OcrExtractionResult, OcrJobRead, PagePreview, PageSplitResult, TitleDeedExtraction
 from utils.file_storage import build_upload_path
 from utils.ocr import OcrError, _flatten_to_pages, detect_page_groups, extract_title_deed
 
@@ -30,7 +30,7 @@ def list_ocr_jobs(
     return db.scalars(select(OcrJob).where(OcrJob.project_id == project_id).order_by(OcrJob.created_at.desc())).all()
 
 
-@router.post("/ocr/split-pages", response_model=list[PagePreview])
+@router.post("/ocr/split-pages", response_model=PageSplitResult)
 def split_pages_for_grouping(
     project_id: int,
     files: list[UploadFile] = File(...),
@@ -49,8 +49,8 @@ def split_pages_for_grouping(
         pages = _flatten_to_pages(file_payload)
     except OcrError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    groups = detect_page_groups(pages)
-    return [
+    groups, warning = detect_page_groups(pages)
+    previews = [
         PagePreview(
             page_number=i + 1,
             image_base64=base64.b64encode(content).decode("ascii"),
@@ -59,6 +59,7 @@ def split_pages_for_grouping(
         )
         for i, (content, mime_type) in enumerate(pages)
     ]
+    return PageSplitResult(pages=previews, warning=warning)
 
 
 @router.post("/ocr/title-deed", response_model=OcrExtractionResult, status_code=status.HTTP_201_CREATED)

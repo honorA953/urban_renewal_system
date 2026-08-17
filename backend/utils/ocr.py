@@ -408,7 +408,48 @@ CONTINUATION_SCHEMA = {
 }
 
 
-def _detect_continuation_chunk(files: list[tuple[bytes, str | None]]) -> list[bool]:
+def _call_openai_structured(payload: dict) -> dict:
+    """POSTs to OpenAI chat completions and returns the parsed JSON content, retrying
+    once on a 429 (rate limit) after a real pause - OpenAI's per-minute token budget
+    needs actual time to free up, so an instant retry just hits the same wall. Used by
+    the lightweight per-page detection helpers below; the main extraction path
+    (_extract_title_deed_chunk) has its own copy of this same pattern inline."""
+    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
+    last_error: OcrError | None = None
+    for attempt in (1, 2):
+        try:
+            resp = httpx.post(OPENAI_ENDPOINT, headers=headers, json=payload, timeout=120.0)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429 and attempt == 1:
+                last_error = OcrError(exc.response.text)
+                time.sleep(20.0)
+                continue
+            raise OcrError(f"呼叫 OpenAI 服務失敗:{exc.response.text}") from exc
+        except httpx.HTTPError as exc:
+            last_error = OcrError(f"呼叫 OpenAI 服務失敗:{exc}")
+            continue
+
+        data = resp.json()
+        text = (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+        if not text:
+            last_error = OcrError("OpenAI 回傳內容為空")
+            continue
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            last_error = OcrError(f"無法解析 OpenAI 回傳的 JSON:{exc}")
+            continue
+
+    raise last_error
+
+
+def _detect_continuation_chunk(files: list[tuple[bytes, str | None]]) -> list[bool] | None:
+    """Returns None (rather than a guessed value) if detection fails after retrying -
+    the caller must treat that as "unknown", not silently merge it into whatever group
+    happened to be current. A wrong guess here is what let 99 pages that actually
+    covered several different 地號/建號 silently collapse into one group with no visible
+    sign anything had gone wrong."""
     content_parts = [{"type": "text", "text": CONTINUATION_PROMPT}]
     for content, mime_type in files:
         b64 = base64.b64encode(content).decode("ascii")
@@ -423,37 +464,40 @@ def _detect_continuation_chunk(files: list[tuple[bytes, str | None]]) -> list[bo
         },
         "max_tokens": 2048,
     }
-    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
 
     try:
-        resp = httpx.post(OPENAI_ENDPOINT, headers=headers, json=payload, timeout=120.0)
-        resp.raise_for_status()
-        data = resp.json()
-        text = (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
-        flags = json.loads(text).get("continuation_flags") or []
-    except (httpx.HTTPError, json.JSONDecodeError):
-        # Best-effort: if detection fails, treat every page in this chunk as
-        # "continues" so they collapse into one group rather than being scattered
-        # into spurious extra groups - the user can still split them apart manually.
-        flags = [True] * len(files)
+        parsed = _call_openai_structured(payload)
+    except OcrError:
+        return None
 
+    flags = parsed.get("continuation_flags") or []
     if len(flags) != len(files):
         flags = (flags + [True] * len(files))[: len(files)]
     return flags
 
 
-def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> list[int]:
-    """Returns a 1-based group number per page, computed from the 「續次頁」 marker: a
-    page without the marker ends the current group, so the next page (if any) starts a
-    new one. This is only a suggestion - the wizard's grouping step still lets the user
-    review and override every page's group number before OCR runs."""
+def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[int], str | None]:
+    """Returns (1-based group number per page, optional warning). Group numbers are
+    computed from the 「續次頁」 marker: a page without the marker ends the current
+    group, so the next page (if any) starts a new one. If detection fails for some
+    pages even after retrying, those pages are forced into their own group (visible as
+    an odd boundary) rather than silently merged into the current one, and a warning is
+    returned naming which pages need manual review. This is only a suggestion either
+    way - the wizard's grouping step still lets the user review and override every
+    page's group number before OCR runs."""
     if not settings.OPENAI_API_KEY or not pages:
-        return [1] * len(pages)
+        return [1] * len(pages), None
 
     chunks = [pages[i : i + PAGES_PER_CHUNK] for i in range(0, len(pages), PAGES_PER_CHUNK)]
     flags: list[bool] = []
-    for chunk in chunks:
-        flags.extend(_detect_continuation_chunk(chunk))
+    failed_ranges = []
+    for i, chunk in enumerate(chunks):
+        result = _detect_continuation_chunk(chunk)
+        if result is None:
+            result = [False] * len(chunk)
+            start = i * PAGES_PER_CHUNK + 1
+            failed_ranges.append(f"第{start}-{start + len(chunk) - 1}頁")
+        flags.extend(result)
 
     groups = []
     group = 1
@@ -461,7 +505,8 @@ def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> list[int]:
         groups.append(group)
         if not flag:
             group += 1
-    return groups
+    warning = f"{'、'.join(failed_ranges)}自動分組偵測失敗,已強制獨立成一組,請務必手動確認分組" if failed_ranges else None
+    return groups, warning
 
 
 # ---- Auto-grouping by 都更案件 (urban renewal case) via the page title ----
@@ -493,7 +538,11 @@ CASE_LOCATION_SCHEMA = {
 }
 
 
-def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[str]:
+def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[str] | None:
+    """Returns None (rather than a guessed value) if detection fails after retrying -
+    same reasoning as _detect_continuation_chunk: silently defaulting to "unknown, so
+    assume same case" is exactly what let a batch spanning several real cases collapse
+    into one invisible-failure group."""
     content_parts = [{"type": "text", "text": CASE_LOCATION_PROMPT}]
     for content, mime_type in files:
         b64 = base64.b64encode(content).decode("ascii")
@@ -508,40 +557,43 @@ def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[s
         },
         "max_tokens": 2048,
     }
-    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
 
     try:
-        resp = httpx.post(OPENAI_ENDPOINT, headers=headers, json=payload, timeout=120.0)
-        resp.raise_for_status()
-        data = resp.json()
-        text = (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
-        locations = json.loads(text).get("locations") or []
-    except (httpx.HTTPError, json.JSONDecodeError):
-        # Best-effort: if detection fails, treat every page in this chunk as
-        # belonging together (empty label - same as "unknown") rather than
-        # scattering them into spurious extra case groups.
-        locations = [""] * len(files)
+        parsed = _call_openai_structured(payload)
+    except OcrError:
+        return None
 
+    locations = parsed.get("locations") or []
     if len(locations) != len(files):
         locations = (locations + [""] * len(files))[: len(files)]
     return locations
 
 
-def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> list[tuple[int, str]]:
-    """Returns (1-based case group number, detected location label) per page. A page
-    whose detected location differs from the previous page's (and isn't empty) starts a
-    new group; an empty/undetected label just continues whatever group is current. Only
-    a suggestion - the batch-import review step lets the user move pages between groups
-    and rename each group before any project gets created."""
+def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tuple[int, str]], str | None]:
+    """Returns ([(1-based case group number, detected location label), ...], optional
+    warning). A page whose detected location differs from the previous page's (and
+    isn't empty) starts a new group; an empty/undetected label just continues whatever
+    group is current. If detection fails for some pages even after retrying, those
+    pages are forced into their own group with a "(偵測失敗)" label instead of being
+    silently merged into whatever group was current, and a warning names which pages
+    need manual review. Only a suggestion either way - the batch-import review step
+    lets the user move pages between groups and rename each group before any project
+    gets created."""
     if not settings.OPENAI_API_KEY or not pages:
-        return [(1, "")] * len(pages)
+        return [(1, "")] * len(pages), None
 
     chunks = [pages[i : i + PAGES_PER_CHUNK] for i in range(0, len(pages), PAGES_PER_CHUNK)]
     locations: list[str] = []
-    for chunk in chunks:
-        locations.extend(_detect_case_location_chunk(chunk))
+    failed_ranges = []
+    for i, chunk in enumerate(chunks):
+        result = _detect_case_location_chunk(chunk)
+        if result is None:
+            result = ["(偵測失敗)"] * len(chunk)
+            start = i * PAGES_PER_CHUNK + 1
+            failed_ranges.append(f"第{start}-{start + len(chunk) - 1}頁")
+        locations.extend(result)
 
-    result: list[tuple[int, str]] = []
+    grouped: list[tuple[int, str]] = []
     group = 1
     current_label = ""
     for i, label in enumerate(locations):
@@ -549,5 +601,7 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> list[tuple[int,
             group += 1
         if label:
             current_label = label
-        result.append((group, label))
-    return result
+        grouped.append((group, label))
+
+    warning = f"{'、'.join(failed_ranges)}自動分案偵測失敗,已強制獨立成一組,請務必手動確認分組" if failed_ranges else None
+    return grouped, warning

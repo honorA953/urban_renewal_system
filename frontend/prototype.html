@@ -1140,8 +1140,9 @@ async function runDetectCases() {
   try {
     const fd = new FormData();
     caseSplitWizard.files.forEach((f) => fd.append("files", f));
-    const pages = await api("/ocr/detect-cases", { method: "POST", body: fd, isForm: true });
-    caseSplitWizard.pages = pages.map((p) => ({ ...p, group: p.suggested_case_group || 1 }));
+    const result = await api("/ocr/detect-cases", { method: "POST", body: fd, isForm: true });
+    if (result.warning) toast(result.warning, "error");
+    caseSplitWizard.pages = result.pages.map((p) => ({ ...p, group: p.suggested_case_group || 1 }));
 
     caseSplitWizard.groupMeta = {};
     caseSplitWizard.pages.forEach((p) => {
@@ -2159,8 +2160,9 @@ async function runTitleDeedSplitAndGroup() {
   try {
     const fd = new FormData();
     titleDeedWizard.files.forEach((f) => fd.append("files", f));
-    const pages = await api(`/projects/${state.currentProjectId}/ocr/split-pages`, { method: "POST", body: fd, isForm: true });
-    titleDeedWizard.pages = pages.map((p) => ({ ...p, group: p.suggested_group || 1 }));
+    const result = await api(`/projects/${state.currentProjectId}/ocr/split-pages`, { method: "POST", body: fd, isForm: true });
+    if (result.warning) toast(result.warning, "error");
+    titleDeedWizard.pages = result.pages.map((p) => ({ ...p, group: p.suggested_group || 1 }));
     renderWizardStepGrouping();
   } catch (err) {
     btn.disabled = false;

@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from deps import require_staff_or_admin
 from models.user import User
-from schemas.ocr import CasePagePreview
+from schemas.ocr import CaseDetectResult, CasePagePreview
 from utils.ocr import OcrError, _flatten_to_pages, detect_case_groups
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
 
 
-@router.post("/detect-cases", response_model=list[CasePagePreview])
+@router.post("/detect-cases", response_model=CaseDetectResult)
 def detect_cases_for_batch_import(
     files: list[UploadFile] = File(...),
     current_user: User = Depends(require_staff_or_admin),
@@ -25,8 +25,8 @@ def detect_cases_for_batch_import(
         pages = _flatten_to_pages(file_payload)
     except OcrError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    groups = detect_case_groups(pages)
-    return [
+    groups, warning = detect_case_groups(pages)
+    previews = [
         CasePagePreview(
             page_number=i + 1,
             image_base64=base64.b64encode(content).decode("ascii"),
@@ -36,3 +36,4 @@ def detect_cases_for_batch_import(
         )
         for i, (content, mime_type) in enumerate(pages)
     ]
+    return CaseDetectResult(pages=previews, warning=warning)

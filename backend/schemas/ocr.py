@@ -98,3 +98,13 @@ class CasePagePreview(BaseModel):
     mime_type: str = "image/png"
     suggested_case_group: int = 1
     case_label: str = ""
+
+
+class PageSplitResult(BaseModel):
+    pages: list[PagePreview]
+    warning: str | None = None
+
+
+class CaseDetectResult(BaseModel):
+    pages: list[CasePagePreview]
+    warning: str | None = None
