@@ -1,4 +1,5 @@
 import base64
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -115,6 +116,20 @@ def extract_title_deed_job(
 
     match = OcrMatchResult(ocr_job_id=job.id, extracted_data=parsed)
     db.add(match)
+
+    # Rename/relabel the documents this call just saved to reflect what was actually
+    # found on them (地號/建號), instead of leaving them as generic "謄本掃描匯入" -
+    # this only produces one clean label per call because the wizard's manual-grouping
+    # flow sends one 地號/建號's pages per call; a single ungrouped batch covering
+    # several parcels/buildings still gets labeled, just with all of them joined.
+    labels = [f"地號{p['parcel_number']}" for p in parsed["land_parcels"] if p.get("parcel_number")]
+    labels += [f"建號{b['building_number']}" for b in parsed["buildings"] if b.get("building_number")]
+    if labels:
+        archive_label = "、".join(labels)
+        for i, doc in enumerate(documents):
+            ext = os.path.splitext(doc.file_name or "")[1] or ".png"
+            doc.description = f"謄本掃描匯入 - {archive_label}"
+            doc.file_name = f"{archive_label}_第{i + 1}頁{ext}" if len(documents) > 1 else f"{archive_label}{ext}"
 
     # Still "completed" - some pages were successfully extracted - but error_message
     # carries a non-fatal warning when part of a multi-chunk batch failed, so the
