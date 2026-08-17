@@ -686,8 +686,17 @@ function openModal(title, bodyHtml, { width = "480px" } = {}) {
       </div>
     </div>`;
   root.querySelector("#modal-close-btn").onclick = closeModal;
-  root.querySelector("#modal-overlay").onclick = (e) => {
-    if (e.target.id === "modal-overlay") closeModal();
+  // Only close on a genuine click on the backdrop itself - checking the click/mouseup
+  // target alone isn't enough, since selecting text inside an input and releasing the
+  // drag outside the dialog also lands the mouseup (and therefore the click target) on
+  // the overlay, which would wrongly close the modal mid-edit.
+  let mouseDownOnOverlay = false;
+  const overlay = root.querySelector("#modal-overlay");
+  overlay.onmousedown = (e) => {
+    mouseDownOnOverlay = e.target.id === "modal-overlay";
+  };
+  overlay.onclick = (e) => {
+    if (e.target.id === "modal-overlay" && mouseDownOnOverlay) closeModal();
   };
   return root;
 }
