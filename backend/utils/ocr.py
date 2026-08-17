@@ -388,24 +388,26 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]]) -> dict:
 # pre-compute page groups is far more trustworthy than asking a model to guess parcel
 # boundaries while also trying to transcribe everything in the same pass.
 
-CONTINUATION_PROMPT = """以下是同一份台灣土地/建物登記謄本依照順序排列的頁面。每一頁印完的資料內容\
-「最後一行」,通常會印著「(續次頁)」或「(本謄本列印完畢)」其中一種——注意:這行字緊接在該頁最後一筆印出的\
-資料內容之後,不是印在整張紙的最底部(這種謄本很多頁下半部是大片空白,不要被空白區域誤導,要往上找資料實際\
-印到哪裡結束)。
+# Every page has a 「頁次:000001」-style field near the top (next to 「列印時間」) that
+# counts pages *within the current 地號/建號's own record* - it resets to 000001 every
+# time a new 地號/建號's data starts. That's a more reliable signal than the 「續次頁」
+# text marker (whose position on the page varies with how much content that page has)
+# because it's a fixed-format field in a fixed location: crop to the top strip, check
+# whether 頁次 reads 000001, and a page that does is the start of a new group.
+PAGE_SEQUENCE_PROMPT = """以下是同一份台灣土地/建物登記謄本依照順序排列的頁面。每一頁最上方,「列印時間」\
+旁邊會印著「頁次:XXXXXX」這個欄位(6 位數字)。這個頁次是「目前這一筆地號/建號自己的內部頁碼」,每次\
+換到新的一筆地號/建號,頁次就會重新從 000001 開始算。
 
-- 如果那一行是「(續次頁)」:代表這一筆地號/建號的記錄會接續到下一頁,這頁不是這筆記錄的最後一頁。
-- 如果那一行是「(本謄本列印完畢)」,或找不到這兩種字樣(例如版面已經直接接著下一筆地號/建號的新標題),\
-代表這一頁是目前這筆記錄的最後一頁。
+請針對每一頁,讀出「頁次:」後面的 6 位數字,判斷是不是「000001」,依照頁面順序回傳一個布林值陣列\
+(true=頁次是 000001、這頁是新一筆地號/建號的第一頁,false=頁次不是 000001、這頁接續前一頁同一筆記錄),\
+陣列長度必須跟頁數一樣多。"""
 
-請針對每一頁,找到該頁資料內容實際結束的地方,判斷那裡印的是不是「(續次頁)」,依照頁面順序回傳一個布林值\
-陣列(true=是續次頁、這筆記錄還沒結束,false=不是續次頁、這筆記錄在這頁結束),陣列長度必須跟頁數一樣多。"""
-
-CONTINUATION_SCHEMA = {
+PAGE_SEQUENCE_SCHEMA = {
     "type": "object",
     "properties": {
-        "continuation_flags": {"type": "array", "items": {"type": "boolean"}},
+        "is_first_page": {"type": "array", "items": {"type": "boolean"}},
     },
-    "required": ["continuation_flags"],
+    "required": ["is_first_page"],
     "additionalProperties": False,
 }
 
@@ -446,23 +448,24 @@ def _call_openai_structured(payload: dict) -> dict:
     raise last_error
 
 
-def _detect_continuation_chunk(files: list[tuple[bytes, str | None]]) -> list[bool] | None:
+def _detect_page_sequence_chunk(files: list[tuple[bytes, str | None]]) -> list[bool] | None:
     """Returns None (rather than a guessed value) if detection fails after retrying -
     the caller must treat that as "unknown", not silently merge it into whatever group
     happened to be current. A wrong guess here is what let 99 pages that actually
     covered several different 地號/建號 silently collapse into one group with no visible
     sign anything had gone wrong."""
-    content_parts = [{"type": "text", "text": CONTINUATION_PROMPT}]
+    content_parts = [{"type": "text", "text": PAGE_SEQUENCE_PROMPT}]
     for content, mime_type in files:
-        b64 = base64.b64encode(content).decode("ascii")
-        content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime_type or 'image/jpeg'};base64,{b64}"}})
+        cropped = _crop_top_strip(content)
+        b64 = base64.b64encode(cropped).decode("ascii")
+        content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
 
     payload = {
         "model": settings.OPENAI_MODEL,
         "messages": [{"role": "user", "content": content_parts}],
         "response_format": {
             "type": "json_schema",
-            "json_schema": {"name": "continuation_detection", "strict": True, "schema": CONTINUATION_SCHEMA},
+            "json_schema": {"name": "page_sequence_detection", "strict": True, "schema": PAGE_SEQUENCE_SCHEMA},
         },
         "max_tokens": 2048,
     }
@@ -472,7 +475,7 @@ def _detect_continuation_chunk(files: list[tuple[bytes, str | None]]) -> list[bo
     except OcrError:
         return None
 
-    flags = parsed.get("continuation_flags") or []
+    flags = parsed.get("is_first_page") or []
     if len(flags) != len(files):
         flags = (flags + [True] * len(files))[: len(files)]
     return flags
@@ -480,13 +483,14 @@ def _detect_continuation_chunk(files: list[tuple[bytes, str | None]]) -> list[bo
 
 def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[int], str | None]:
     """Returns (1-based group number per page, optional warning). Group numbers are
-    computed from the 「續次頁」 marker: a page without the marker ends the current
-    group, so the next page (if any) starts a new one. If detection fails for some
-    pages even after retrying, those pages are forced into their own group (visible as
-    an odd boundary) rather than silently merged into the current one, and a warning is
-    returned naming which pages need manual review. This is only a suggestion either
-    way - the wizard's grouping step still lets the user review and override every
-    page's group number before OCR runs."""
+    computed from the 「頁次:000001」 field near the top of each page: a page whose 頁次
+    reads 000001 starts a new group (it's the first page of a new 地號/建號's own
+    record); any other 頁次 value continues the current group. If detection fails for
+    some pages even after retrying, those pages are forced to start their own group
+    (visible as an odd boundary) rather than silently merged into the current one, and
+    a warning is returned naming which pages need manual review. This is only a
+    suggestion either way - the wizard's grouping step still lets the user review and
+    override every page's group number before OCR runs."""
     if not settings.OPENAI_API_KEY or not pages:
         return [1] * len(pages), None
 
@@ -494,19 +498,19 @@ def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[int]
     flags: list[bool] = []
     failed_ranges = []
     for i, chunk in enumerate(chunks):
-        result = _detect_continuation_chunk(chunk)
+        result = _detect_page_sequence_chunk(chunk)
         if result is None:
-            result = [False] * len(chunk)
+            result = [True] * len(chunk)
             start = i * PAGES_PER_CHUNK + 1
             failed_ranges.append(f"第{start}-{start + len(chunk) - 1}頁")
         flags.extend(result)
 
     groups = []
     group = 1
-    for flag in flags:
-        groups.append(group)
-        if not flag:
+    for i, is_first in enumerate(flags):
+        if i > 0 and is_first:
             group += 1
+        groups.append(group)
     warning = f"{'、'.join(failed_ranges)}自動分組偵測失敗,已強制獨立成一組,請務必手動確認分組" if failed_ranges else None
     return groups, warning
 
@@ -517,18 +521,19 @@ def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[int]
 # or 「建物登記第三類謄本(建物全部)」), then 「XX區XX段XX小段XX地號/建號」. Pages from the
 # same urban renewal case share the same 鄉鎮市區+段+小段 even though the specific
 # 地號/建號 differs page to page - that's the signal used here to guess which pages
-# belong together, analogous to how detect_page_groups() uses the 續次頁 marker one
-# level down (per parcel/building instead of per case).
+# belong together, analogous to how detect_page_groups() uses the 頁次 field one level
+# down (per parcel/building instead of per case).
 #
-# The title is always at the very top of the page, so unlike continuation detection
-# (where the marker's position varies with how much content is on the page), case
-# detection only ever needs to look at a small strip - cropping to it cuts the image
-# size (and therefore upload time, processing time, and token/rate-limit pressure) by
-# roughly 6-7x with no loss of the information this prompt actually needs.
-CASE_DETECTION_CROP_FRACTION = 0.15
+# Both the title and the 頁次 field live in the same fixed header area at the very top
+# of every page (unlike the old 續次頁-marker approach, whose position on the page
+# varied with how much content that page had), so both detectors only ever need to
+# look at a small strip - cropping to it cuts the image size (and therefore upload
+# time, processing time, and token/rate-limit pressure) by roughly 6-7x with no loss of
+# the information either prompt actually needs.
+TOP_STRIP_CROP_FRACTION = 0.15
 
 
-def _crop_top_strip(content: bytes, fraction: float = CASE_DETECTION_CROP_FRACTION) -> bytes:
+def _crop_top_strip(content: bytes, fraction: float = TOP_STRIP_CROP_FRACTION) -> bytes:
     try:
         img = Image.open(io.BytesIO(content))
         img.load()
