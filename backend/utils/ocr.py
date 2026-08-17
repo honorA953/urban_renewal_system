@@ -462,3 +462,92 @@ def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> list[int]:
         if not flag:
             group += 1
     return groups
+
+
+# ---- Auto-grouping by 都更案件 (urban renewal case) via the page title ----
+#
+# Every page's title has two lines: the document type (「土地登記第三類謄本(地號全部)」
+# or 「建物登記第三類謄本(建物全部)」), then 「XX區XX段XX小段XX地號/建號」. Pages from the
+# same urban renewal case share the same 鄉鎮市區+段+小段 even though the specific
+# 地號/建號 differs page to page - that's the signal used here to guess which pages
+# belong together, analogous to how detect_page_groups() uses the 續次頁 marker one
+# level down (per parcel/building instead of per case).
+
+CASE_LOCATION_PROMPT = """以下是依序排列的台灣土地/建物登記謄本頁面。每一頁最上方的標題通常是兩行:\
+第一行是文件類型(例如「土地登記第三類謄本(地號全部)」或「建物登記第三類謄本(建物全部)」),第二行是\
+「XX區XX段XX小段XX地號」或「XX區XX段XX小段XX建號」這種格式。
+
+請針對每一頁,讀出標題第二行的「鄉鎮市區+段+小段」部分,不要包含最後面的地號或建號數字本身\
+(例如「信義區祥和段三小段0242-0000地號」只取「信義區祥和段三小段」)。如果這頁看不出標題或無法判斷,\
+該頁請回傳空字串。
+
+依照頁面順序回傳一個字串陣列,長度必須跟頁數一樣多。"""
+
+CASE_LOCATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "locations": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["locations"],
+    "additionalProperties": False,
+}
+
+
+def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[str]:
+    content_parts = [{"type": "text", "text": CASE_LOCATION_PROMPT}]
+    for content, mime_type in files:
+        b64 = base64.b64encode(content).decode("ascii")
+        content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime_type or 'image/jpeg'};base64,{b64}"}})
+
+    payload = {
+        "model": settings.OPENAI_MODEL,
+        "messages": [{"role": "user", "content": content_parts}],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "case_location_detection", "strict": True, "schema": CASE_LOCATION_SCHEMA},
+        },
+        "max_tokens": 2048,
+    }
+    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
+
+    try:
+        resp = httpx.post(OPENAI_ENDPOINT, headers=headers, json=payload, timeout=120.0)
+        resp.raise_for_status()
+        data = resp.json()
+        text = (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+        locations = json.loads(text).get("locations") or []
+    except (httpx.HTTPError, json.JSONDecodeError):
+        # Best-effort: if detection fails, treat every page in this chunk as
+        # belonging together (empty label - same as "unknown") rather than
+        # scattering them into spurious extra case groups.
+        locations = [""] * len(files)
+
+    if len(locations) != len(files):
+        locations = (locations + [""] * len(files))[: len(files)]
+    return locations
+
+
+def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> list[tuple[int, str]]:
+    """Returns (1-based case group number, detected location label) per page. A page
+    whose detected location differs from the previous page's (and isn't empty) starts a
+    new group; an empty/undetected label just continues whatever group is current. Only
+    a suggestion - the batch-import review step lets the user move pages between groups
+    and rename each group before any project gets created."""
+    if not settings.OPENAI_API_KEY or not pages:
+        return [(1, "")] * len(pages)
+
+    chunks = [pages[i : i + PAGES_PER_CHUNK] for i in range(0, len(pages), PAGES_PER_CHUNK)]
+    locations: list[str] = []
+    for chunk in chunks:
+        locations.extend(_detect_case_location_chunk(chunk))
+
+    result: list[tuple[int, str]] = []
+    group = 1
+    current_label = ""
+    for i, label in enumerate(locations):
+        if i > 0 and label and label != current_label:
+            group += 1
+        if label:
+            current_label = label
+        result.append((group, label))
+    return result

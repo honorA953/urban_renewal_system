@@ -528,7 +528,10 @@
     <div id="view-dashboard">
       <div class="page-header">
         <h2>案件事項</h2>
-        <button class="btn-primary hidden" id="new-project-btn">+ 新增案件</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn-secondary hidden" id="batch-import-btn">批次匯入(自動分案件)</button>
+          <button class="btn-primary hidden" id="new-project-btn">+ 新增案件</button>
+        </div>
       </div>
       <div id="project-grid" class="project-grid"></div>
     </div>
@@ -819,6 +822,7 @@ function showApp() {
   document.getElementById("nav-users-btn").classList.toggle("hidden", !isAdmin());
   document.getElementById("nav-loginlogs-btn").classList.toggle("hidden", !isAdmin());
   document.getElementById("new-project-btn").classList.toggle("hidden", !isEditor());
+  document.getElementById("batch-import-btn").classList.toggle("hidden", !isEditor());
 }
 
 function renderNavUser() {
@@ -1061,6 +1065,260 @@ document.getElementById("new-project-btn").addEventListener("click", async () =>
     } catch (err) {}
   });
 });
+
+/* ================= Batch import: split a mixed batch into 都更案件 first ================= */
+
+let caseSplitWizard = null;
+
+document.getElementById("batch-import-btn").addEventListener("click", () => {
+  caseSplitWizard = { files: [], pages: [], groupMeta: {} };
+  renderCaseSplitStep0();
+});
+
+function renderCaseSplitStep0() {
+  openModal(
+    "批次匯入(自動分案件)",
+    `
+    <div class="helper-text" style="margin-bottom:10px">
+      適合上傳一大批混在一起、橫跨多個都更案件的謄本掃描檔。系統會先依每頁標題的鄉鎮市區/段/小段,自動建議
+      該分成幾個案件,審核調整後再分別建立/歸入案件;實際的地號/建物明細,建案後還是要各自進到案件裡用
+      「掃描謄本匯入」精靈處理。
+    </div>
+    <div class="field">
+      <label>選擇謄本圖片或 PDF(可多選)</label>
+      <input type="file" id="case-split-file-input" accept="image/*,application/pdf" multiple>
+    </div>
+    <div id="case-split-file-list" style="margin-top:10px"></div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+      <button type="button" class="btn-primary" id="case-split-detect-btn">偵測案件分組</button>
+    </div>`,
+    { width: "600px" }
+  );
+
+  renderCaseSplitFileList();
+
+  document.getElementById("case-split-file-input").addEventListener("change", (e) => {
+    caseSplitWizard.files.push(...Array.from(e.target.files));
+    e.target.value = "";
+    renderCaseSplitFileList();
+  });
+  document.getElementById("case-split-detect-btn").addEventListener("click", runDetectCases);
+}
+
+function renderCaseSplitFileList() {
+  const wrap = document.getElementById("case-split-file-list");
+  if (!caseSplitWizard.files.length) {
+    wrap.innerHTML = `<div class="helper-text">尚未選擇檔案</div>`;
+    return;
+  }
+  wrap.innerHTML = caseSplitWizard.files
+    .map(
+      (f, i) => `
+      <div class="record-row" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px">
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i + 1}. ${escapeHtml(f.name)}</span>
+        <button type="button" class="btn-danger btn-sm" data-remove-file="${i}">移除</button>
+      </div>`
+    )
+    .join("");
+  wrap.querySelectorAll("[data-remove-file]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      caseSplitWizard.files.splice(Number(btn.dataset.removeFile), 1);
+      renderCaseSplitFileList();
+    });
+  });
+}
+
+async function runDetectCases() {
+  if (!caseSplitWizard.files.length) {
+    toast("請先選擇至少一個檔案", "error");
+    return;
+  }
+  const btn = document.getElementById("case-split-detect-btn");
+  btn.disabled = true;
+  btn.textContent = "偵測中(頁數多可能需要數分鐘)...";
+  try {
+    const fd = new FormData();
+    caseSplitWizard.files.forEach((f) => fd.append("files", f));
+    const pages = await api("/ocr/detect-cases", { method: "POST", body: fd, isForm: true });
+    caseSplitWizard.pages = pages.map((p) => ({ ...p, group: p.suggested_case_group || 1 }));
+
+    caseSplitWizard.groupMeta = {};
+    caseSplitWizard.pages.forEach((p) => {
+      if (!caseSplitWizard.groupMeta[p.group]) {
+        caseSplitWizard.groupMeta[p.group] = { name: p.case_label || `未命名案件${p.group}`, mode: "new", existingProjectId: "" };
+      }
+    });
+
+    await renderCaseSplitReview();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "偵測案件分組";
+  }
+}
+
+async function renderCaseSplitReview() {
+  let existingProjects = [];
+  try {
+    existingProjects = await api("/projects", { silent: true });
+  } catch (e) {}
+
+  const groupNumbers = [...new Set(caseSplitWizard.pages.map((p) => p.group))].sort((a, b) => a - b);
+
+  openModal(
+    "批次匯入(自動分案件)· 審核分組",
+    `
+    <div class="final-banner warning" style="margin-bottom:14px">⚠ AI 判斷不一定準確,請逐頁核對「案件分組編號」,有錯直接改編號</div>
+    <div id="case-split-page-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;max-height:280px;overflow-y:auto;padding:4px;margin-bottom:16px"></div>
+    <div id="case-split-group-meta"></div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="renderCaseSplitStep0()">上一步</button>
+      <button type="button" class="btn-primary" id="case-split-confirm-btn">確認建立</button>
+    </div>`,
+    { width: "760px" }
+  );
+
+  const grid = document.getElementById("case-split-page-grid");
+  grid.innerHTML = caseSplitWizard.pages
+    .map(
+      (p, i) => `
+      <div class="record-row" style="padding:6px;text-align:center">
+        <img src="data:${p.mime_type};base64,${p.image_base64}" style="width:100%;height:110px;object-fit:cover;border-radius:4px;border:1px solid var(--border)">
+        <div class="helper-text" style="margin:4px 0 2px">第 ${p.page_number} 頁</div>
+        <input type="number" min="1" value="${p.group}" data-case-page-group="${i}" style="width:100%;text-align:center" autocomplete="off">
+      </div>`
+    )
+    .join("");
+  grid.querySelectorAll("[data-case-page-group]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const i = Number(input.dataset.casePageGroup);
+      caseSplitWizard.pages[i].group = Math.max(1, Number(input.value) || 1);
+      input.value = caseSplitWizard.pages[i].group;
+    });
+  });
+
+  const metaWrap = document.getElementById("case-split-group-meta");
+  metaWrap.innerHTML = groupNumbers
+    .map((g) => {
+      const meta = caseSplitWizard.groupMeta[g] || { name: `未命名案件${g}`, mode: "new", existingProjectId: "" };
+      const pageCount = caseSplitWizard.pages.filter((p) => p.group === g).length;
+      return `
+      <div class="record-row" style="padding:12px;margin-bottom:10px">
+        <div class="helper-text" style="font-weight:600;margin-bottom:8px">第 ${g} 組(${pageCount} 頁)</div>
+        <div class="field-row">
+          <div class="field"><label>案件名稱</label><input data-group-name="${g}" value="${escapeHtml(meta.name)}" autocomplete="off"></div>
+          <div class="field">
+            <label>建立方式</label>
+            <select data-group-mode="${g}">
+              <option value="new" ${meta.mode === "new" ? "selected" : ""}>建立新案件</option>
+              <option value="existing" ${meta.mode === "existing" ? "selected" : ""}>加入既有案件</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" data-existing-wrap="${g}" style="${meta.mode === "existing" ? "" : "display:none"}">
+          <label>選擇既有案件</label>
+          <select data-group-existing="${g}">
+            <option value="">請選擇</option>
+            ${existingProjects
+              .map((p) => `<option value="${p.id}" ${String(meta.existingProjectId) === String(p.id) ? "selected" : ""}>${escapeHtml(p.name)}(${escapeHtml(p.project_code)})</option>`)
+              .join("")}
+          </select>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  groupNumbers.forEach((g) => {
+    const nameInput = metaWrap.querySelector(`[data-group-name="${g}"]`);
+    const modeSelect = metaWrap.querySelector(`[data-group-mode="${g}"]`);
+    const existingWrap = metaWrap.querySelector(`[data-existing-wrap="${g}"]`);
+    const existingSelect = metaWrap.querySelector(`[data-group-existing="${g}"]`);
+    nameInput.addEventListener("input", () => {
+      caseSplitWizard.groupMeta[g] = caseSplitWizard.groupMeta[g] || {};
+      caseSplitWizard.groupMeta[g].name = nameInput.value;
+    });
+    modeSelect.addEventListener("change", () => {
+      caseSplitWizard.groupMeta[g] = caseSplitWizard.groupMeta[g] || {};
+      caseSplitWizard.groupMeta[g].mode = modeSelect.value;
+      existingWrap.style.display = modeSelect.value === "existing" ? "" : "none";
+    });
+    existingSelect.addEventListener("change", () => {
+      caseSplitWizard.groupMeta[g] = caseSplitWizard.groupMeta[g] || {};
+      caseSplitWizard.groupMeta[g].existingProjectId = existingSelect.value;
+    });
+  });
+
+  document.getElementById("case-split-confirm-btn").addEventListener("click", runConfirmCaseSplit);
+}
+
+async function runConfirmCaseSplit() {
+  const btn = document.getElementById("case-split-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "建立中...";
+
+  const groupNumbers = [...new Set(caseSplitWizard.pages.map((p) => p.group))].sort((a, b) => a - b);
+  const results = [];
+
+  try {
+    for (const g of groupNumbers) {
+      const meta = caseSplitWizard.groupMeta[g] || { name: `未命名案件${g}`, mode: "new", existingProjectId: "" };
+      const groupPages = caseSplitWizard.pages.filter((p) => p.group === g);
+      let project;
+      if (meta.mode === "existing" && meta.existingProjectId) {
+        project = await api(`/projects/${meta.existingProjectId}`);
+      } else {
+        const code = await suggestNextProjectCode();
+        project = await api("/projects", {
+          method: "POST",
+          body: { project_code: code, name: meta.name || code, district: "", address: "" },
+        });
+      }
+      results.push({ project, pageCount: groupPages.length, pages: groupPages });
+    }
+
+    closeModal();
+    toast("案件已建立/歸入完成", "success");
+    await loadDashboard();
+    renderCaseSplitResults(results);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "確認建立";
+  }
+}
+
+function renderCaseSplitResults(results) {
+  openModal(
+    "批次匯入完成",
+    `
+    <div class="helper-text" style="margin-bottom:10px">接下來請逐一進到每個案件,用「掃描謄本匯入」精靈確認地號/建物/地主資料。</div>
+    ${results
+      .map(
+        (r, i) => `
+      <div class="record-row" style="display:flex;align-items:center;gap:8px;padding:10px;margin-bottom:8px">
+        <span style="flex:1">${escapeHtml(r.project.name)}(${escapeHtml(r.project.project_code)})· ${r.pageCount} 頁</span>
+        <button type="button" class="btn-primary btn-sm" data-go-case="${i}">前往此案件掃描辨識</button>
+      </div>`
+      )
+      .join("")}
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal(); goToDashboard();">完成</button>
+    </div>`,
+    { width: "600px" }
+  );
+
+  document.querySelectorAll("[data-go-case]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const r = results[Number(btn.dataset.goCase)];
+      const files = r.pages.map(
+        (p) => new File([base64ToBlob(p.image_base64, p.mime_type)], `page-${p.page_number}.png`, { type: p.mime_type })
+      );
+      closeModal();
+      await openProject(r.project.id);
+      titleDeedWizard = { files, pages: [], step: 0, data: null, activeType: null, activeIndex: null };
+      renderWizardStep0();
+    });
+  });
+}
 
 document.getElementById("back-to-dashboard").addEventListener("click", goToDashboard);
 

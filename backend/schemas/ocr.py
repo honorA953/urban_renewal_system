@@ -86,3 +86,15 @@ class PagePreview(BaseModel):
     image_base64: str
     mime_type: str = "image/png"
     suggested_group: int = 1
+
+
+class CasePagePreview(BaseModel):
+    """One page from a batch-import upload, pre-split and labeled with which 都更案件
+    it's guessed to belong to (by 鄉鎮市區+段+小段 read from the page's title) - lets the
+    user review/adjust case grouping before any project is created."""
+
+    page_number: int
+    image_base64: str
+    mime_type: str = "image/png"
+    suggested_case_group: int = 1
+    case_label: str = ""
