@@ -1156,7 +1156,13 @@ async function runDetectCases() {
     caseSplitWizard.groupMeta = {};
     caseSplitWizard.pages.forEach((p) => {
       if (!caseSplitWizard.groupMeta[p.group]) {
-        caseSplitWizard.groupMeta[p.group] = { name: p.case_label || `未命名案件${p.group}`, mode: "new", existingProjectId: "" };
+        const code = p.case_label && p.sample_number ? `${p.case_label}-${p.sample_number}` : "";
+        caseSplitWizard.groupMeta[p.group] = {
+          name: p.case_label || `未命名案件${p.group}`,
+          code,
+          mode: "new",
+          existingProjectId: "",
+        };
       }
     });
 
@@ -1211,13 +1217,19 @@ async function renderCaseSplitReview() {
   const metaWrap = document.getElementById("case-split-group-meta");
   metaWrap.innerHTML = groupNumbers
     .map((g) => {
-      const meta = caseSplitWizard.groupMeta[g] || { name: `未命名案件${g}`, mode: "new", existingProjectId: "" };
+      const meta = caseSplitWizard.groupMeta[g] || { name: `未命名案件${g}`, code: "", mode: "new", existingProjectId: "" };
       const pageCount = caseSplitWizard.pages.filter((p) => p.group === g).length;
       return `
       <div class="record-row" style="padding:12px;margin-bottom:10px">
         <div class="helper-text" style="font-weight:600;margin-bottom:8px">第 ${g} 組(${pageCount} 頁)</div>
         <div class="field-row">
           <div class="field"><label>案件名稱</label><input data-group-name="${g}" value="${escapeHtml(meta.name)}" autocomplete="off"></div>
+          <div class="field">
+            <label>案件代碼(新案件用,依偵測到的地號建議,留空則自動編號)</label>
+            <input data-group-code="${g}" value="${escapeHtml(meta.code)}" placeholder="自動編號" autocomplete="off">
+          </div>
+        </div>
+        <div class="field-row">
           <div class="field">
             <label>建立方式</label>
             <select data-group-mode="${g}">
@@ -1241,12 +1253,17 @@ async function renderCaseSplitReview() {
 
   groupNumbers.forEach((g) => {
     const nameInput = metaWrap.querySelector(`[data-group-name="${g}"]`);
+    const codeInput = metaWrap.querySelector(`[data-group-code="${g}"]`);
     const modeSelect = metaWrap.querySelector(`[data-group-mode="${g}"]`);
     const existingWrap = metaWrap.querySelector(`[data-existing-wrap="${g}"]`);
     const existingSelect = metaWrap.querySelector(`[data-group-existing="${g}"]`);
     nameInput.addEventListener("input", () => {
       caseSplitWizard.groupMeta[g] = caseSplitWizard.groupMeta[g] || {};
       caseSplitWizard.groupMeta[g].name = nameInput.value;
+    });
+    codeInput.addEventListener("input", () => {
+      caseSplitWizard.groupMeta[g] = caseSplitWizard.groupMeta[g] || {};
+      caseSplitWizard.groupMeta[g].code = codeInput.value;
     });
     modeSelect.addEventListener("change", () => {
       caseSplitWizard.groupMeta[g] = caseSplitWizard.groupMeta[g] || {};
@@ -1272,13 +1289,13 @@ async function runConfirmCaseSplit() {
 
   try {
     for (const g of groupNumbers) {
-      const meta = caseSplitWizard.groupMeta[g] || { name: `未命名案件${g}`, mode: "new", existingProjectId: "" };
+      const meta = caseSplitWizard.groupMeta[g] || { name: `未命名案件${g}`, code: "", mode: "new", existingProjectId: "" };
       const groupPages = caseSplitWizard.pages.filter((p) => p.group === g);
       let project;
       if (meta.mode === "existing" && meta.existingProjectId) {
         project = await api(`/projects/${meta.existingProjectId}`);
       } else {
-        const code = await suggestNextProjectCode();
+        const code = (meta.code || "").trim() || (await suggestNextProjectCode());
         project = await api("/projects", {
           method: "POST",
           body: { project_code: code, name: meta.name || code, district: "", address: "" },

@@ -98,6 +98,7 @@ class CasePagePreview(BaseModel):
     mime_type: str = "image/png"
     suggested_case_group: int = 1
     case_label: str = ""
+    sample_number: str = ""
 
 
 class PageSplitResult(BaseModel):

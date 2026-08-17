@@ -522,27 +522,43 @@ CASE_LOCATION_PROMPT = """以下是依序排列的台灣土地/建物登記謄�
 第一行是文件類型(例如「土地登記第三類謄本(地號全部)」或「建物登記第三類謄本(建物全部)」),第二行是\
 「XX區XX段XX小段XX地號」或「XX區XX段XX小段XX建號」這種格式。
 
-請針對每一頁,讀出標題第二行的「鄉鎮市區+段+小段」部分,不要包含最後面的地號或建號數字本身\
-(例如「信義區祥和段三小段0242-0000地號」只取「信義區祥和段三小段」)。如果這頁看不出標題或無法判斷,\
-該頁請回傳空字串。
+請針對每一頁:
+1. location:讀出標題第二行的「鄉鎮市區+段+小段」部分,不要包含最後面的地號或建號數字本身\
+(例如「信義區祥和段三小段0242-0000地號」只取「信義區祥和段三小段」)。
+2. sample_number:讀出標題第二行最後面的地號或建號數字本身(例如「信義區祥和段三小段0242-0000地號」\
+取「0242-0000」)。
 
-依照頁面順序回傳一個字串陣列,長度必須跟頁數一樣多。"""
+如果這頁看不出標題或無法判斷,兩個欄位都回傳空字串。依照頁面順序回傳一個陣列,長度必須跟頁數一樣多。"""
 
 CASE_LOCATION_SCHEMA = {
     "type": "object",
     "properties": {
-        "locations": {"type": "array", "items": {"type": "string"}},
+        "pages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"},
+                    "sample_number": {"type": "string"},
+                },
+                "required": ["location", "sample_number"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["locations"],
+    "required": ["pages"],
     "additionalProperties": False,
 }
 
 
-def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[str] | None:
+def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[tuple[str, str]] | None:
     """Returns None (rather than a guessed value) if detection fails after retrying -
     same reasoning as _detect_continuation_chunk: silently defaulting to "unknown, so
     assume same case" is exactly what let a batch spanning several real cases collapse
-    into one invisible-failure group."""
+    into one invisible-failure group. On success, returns (location, sample_number) per
+    page - sample_number is the specific 地號/建號 printed on that page, kept only for
+    suggesting a project code, never used to decide grouping (many different 地號/建號
+    legitimately share one case)."""
     content_parts = [{"type": "text", "text": CASE_LOCATION_PROMPT}]
     for content, mime_type in files:
         b64 = base64.b64encode(content).decode("ascii")
@@ -555,7 +571,7 @@ def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[s
             "type": "json_schema",
             "json_schema": {"name": "case_location_detection", "strict": True, "schema": CASE_LOCATION_SCHEMA},
         },
-        "max_tokens": 2048,
+        "max_tokens": 4096,
     }
 
     try:
@@ -563,45 +579,46 @@ def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[s
     except OcrError:
         return None
 
-    locations = parsed.get("locations") or []
-    if len(locations) != len(files):
-        locations = (locations + [""] * len(files))[: len(files)]
-    return locations
+    entries = parsed.get("pages") or []
+    results = [(e.get("location") or "", e.get("sample_number") or "") for e in entries]
+    if len(results) != len(files):
+        results = (results + [("", "")] * len(files))[: len(files)]
+    return results
 
 
-def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tuple[int, str]], str | None]:
-    """Returns ([(1-based case group number, detected location label), ...], optional
-    warning). A page whose detected location differs from the previous page's (and
-    isn't empty) starts a new group; an empty/undetected label just continues whatever
-    group is current. If detection fails for some pages even after retrying, those
-    pages are forced into their own group with a "(偵測失敗)" label instead of being
-    silently merged into whatever group was current, and a warning names which pages
-    need manual review. Only a suggestion either way - the batch-import review step
-    lets the user move pages between groups and rename each group before any project
-    gets created."""
+def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tuple[int, str, str]], str | None]:
+    """Returns ([(1-based case group number, detected location label, sample 地號/建號),
+    ...], optional warning). A page whose detected location differs from the previous
+    page's (and isn't empty) starts a new group; an empty/undetected label just
+    continues whatever group is current. If detection fails for some pages even after
+    retrying, those pages are forced into their own group with a "(偵測失敗)" label
+    instead of being silently merged into whatever group was current, and a warning
+    names which pages need manual review. Only a suggestion either way - the
+    batch-import review step lets the user move pages between groups and rename each
+    group before any project gets created."""
     if not settings.OPENAI_API_KEY or not pages:
-        return [(1, "")] * len(pages), None
+        return [(1, "", "")] * len(pages), None
 
     chunks = [pages[i : i + PAGES_PER_CHUNK] for i in range(0, len(pages), PAGES_PER_CHUNK)]
-    locations: list[str] = []
+    entries: list[tuple[str, str]] = []
     failed_ranges = []
     for i, chunk in enumerate(chunks):
         result = _detect_case_location_chunk(chunk)
         if result is None:
-            result = ["(偵測失敗)"] * len(chunk)
+            result = [("(偵測失敗)", "")] * len(chunk)
             start = i * PAGES_PER_CHUNK + 1
             failed_ranges.append(f"第{start}-{start + len(chunk) - 1}頁")
-        locations.extend(result)
+        entries.extend(result)
 
-    grouped: list[tuple[int, str]] = []
+    grouped: list[tuple[int, str, str]] = []
     group = 1
     current_label = ""
-    for i, label in enumerate(locations):
+    for i, (label, sample_number) in enumerate(entries):
         if i > 0 and label and label != current_label:
             group += 1
         if label:
             current_label = label
-        grouped.append((group, label))
+        grouped.append((group, label, sample_number))
 
     warning = f"{'、'.join(failed_ranges)}自動分案偵測失敗,已強制獨立成一組,請務必手動確認分組" if failed_ranges else None
     return grouped, warning

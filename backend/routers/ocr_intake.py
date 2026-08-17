@@ -33,6 +33,7 @@ def detect_cases_for_batch_import(
             mime_type=mime_type or "image/png",
             suggested_case_group=groups[i][0],
             case_label=groups[i][1],
+            sample_number=groups[i][2],
         )
         for i, (content, mime_type) in enumerate(pages)
     ]
