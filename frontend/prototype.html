@@ -1902,7 +1902,7 @@ async function runTitleDeedSplitAndGroup() {
     const fd = new FormData();
     titleDeedWizard.files.forEach((f) => fd.append("files", f));
     const pages = await api(`/projects/${state.currentProjectId}/ocr/split-pages`, { method: "POST", body: fd, isForm: true });
-    titleDeedWizard.pages = pages.map((p) => ({ ...p, group: 1 }));
+    titleDeedWizard.pages = pages.map((p) => ({ ...p, group: p.suggested_group || 1 }));
     renderWizardStepGrouping();
   } catch (err) {
     btn.disabled = false;
@@ -1916,7 +1916,7 @@ function renderWizardStepGrouping() {
     "掃描謄本匯入 · 手動分組",
     `
     <div class="helper-text" style="margin-bottom:10px">
-      每張縮圖下方填「分組編號」,同一編號的頁面會合成一組一起送出辨識,不同組會分開各自辨識,避免不同地號/建號的內容被混在一起。預設全部是第 1 組。
+      每張縮圖下方填「分組編號」,同一編號的頁面會合成一組一起送出辨識,不同組會分開各自辨識,避免不同地號/建號的內容被混在一起。系統已依「續次頁」標記自動建議分組(⚠ AI 判斷不一定準確,請務必逐頁核對、有錯直接修改編號)。
     </div>
     <div id="wizard-page-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;max-height:420px;overflow-y:auto;padding:4px"></div>
     <div class="modal-footer">

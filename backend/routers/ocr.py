@@ -14,7 +14,7 @@ from models.user import User
 from routers.projects import get_project_or_404
 from schemas.ocr import OcrExtractionResult, OcrJobRead, PagePreview, TitleDeedExtraction
 from utils.file_storage import build_upload_path
-from utils.ocr import OcrError, _flatten_to_pages, extract_title_deed
+from utils.ocr import OcrError, _flatten_to_pages, detect_page_groups, extract_title_deed
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["ocr"])
 
@@ -37,17 +37,25 @@ def split_pages_for_grouping(
     current_user: User = Depends(require_staff_or_admin),
 ):
     """Splits any uploaded PDFs into per-page images (reusing the same logic the OCR
-    call itself uses) and returns them as previews, without persisting anything. Lets
-    the wizard's manual grouping step show every page before the user decides which
-    ones to send together for extraction."""
+    call itself uses) and returns them as previews, without persisting anything. Also
+    suggests a group number per page based on the 「續次頁」(continued on next page)
+    marker printed at the bottom of each page, so the wizard's grouping step starts
+    from a reasonable auto-detected grouping instead of everything defaulting to one
+    group - the user can still review and override every page before OCR runs."""
     get_project_or_404(db, project_id)
     file_payload = [(upload.file.read(), upload.content_type) for upload in files]
     try:
         pages = _flatten_to_pages(file_payload)
     except OcrError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    groups = detect_page_groups(pages)
     return [
-        PagePreview(page_number=i + 1, image_base64=base64.b64encode(content).decode("ascii"), mime_type=mime_type or "image/png")
+        PagePreview(
+            page_number=i + 1,
+            image_base64=base64.b64encode(content).decode("ascii"),
+            mime_type=mime_type or "image/png",
+            suggested_group=groups[i],
+        )
         for i, (content, mime_type) in enumerate(pages)
     ]
 

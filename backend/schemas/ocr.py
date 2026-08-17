@@ -85,3 +85,4 @@ class PagePreview(BaseModel):
     page_number: int
     image_base64: str
     mime_type: str = "image/png"
+    suggested_group: int = 1

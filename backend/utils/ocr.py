@@ -185,7 +185,14 @@ def _expand_pdf_pages(content: bytes) -> list[tuple[bytes, str | None]]:
     request and hit the same quality breakdown chunking is meant to avoid."""
     try:
         doc = fitz.open(stream=content, filetype="pdf")
-        pages = [(page.get_pixmap(dpi=PDF_RENDER_DPI).tobytes("png"), "image/png") for page in doc]
+        # JPEG instead of PNG: these are scanned pages with a dense repeating security
+        # watermark pattern, which PNG (lossless) compresses very poorly - each page was
+        # coming out ~5-7MB, making both the split-pages preview and every OCR upload
+        # painfully slow, especially over a public tunnel. High-quality JPEG is a
+        # fraction of the size with no meaningful loss of text legibility.
+        pages = [
+            (page.get_pixmap(dpi=PDF_RENDER_DPI).tobytes("jpg", jpg_quality=85), "image/jpeg") for page in doc
+        ]
     except Exception as exc:  # fitz raises its own exception types on malformed PDFs
         raise OcrError(f"無法讀取 PDF 檔案:{exc}") from exc
     if not pages:
@@ -368,3 +375,90 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]]) -> dict:
         }
 
     raise last_error
+
+
+# ---- Auto-grouping via the "續次頁" (continued on next page) marker ----
+#
+# Taiwan land/building registry printouts mark the bottom of every page with either
+# 「續次頁」(this 地號/建號's record continues onto the next page) or nothing/a terminal
+# marker like 「本謄本列印完畢」(printing complete). That's a reliable, document-native
+# signal for exactly where one parcel/building's record ends - reusing it to
+# pre-compute page groups is far more trustworthy than asking a model to guess parcel
+# boundaries while also trying to transcribe everything in the same pass.
+
+CONTINUATION_PROMPT = """以下是同一份台灣土地/建物登記謄本依照順序排列的頁面。每一頁印完的資料內容\
+「最後一行」,通常會印著「(續次頁)」或「(本謄本列印完畢)」其中一種——注意:這行字緊接在該頁最後一筆印出的\
+資料內容之後,不是印在整張紙的最底部(這種謄本很多頁下半部是大片空白,不要被空白區域誤導,要往上找資料實際\
+印到哪裡結束)。
+
+- 如果那一行是「(續次頁)」:代表這一筆地號/建號的記錄會接續到下一頁,這頁不是這筆記錄的最後一頁。
+- 如果那一行是「(本謄本列印完畢)」,或找不到這兩種字樣(例如版面已經直接接著下一筆地號/建號的新標題),\
+代表這一頁是目前這筆記錄的最後一頁。
+
+請針對每一頁,找到該頁資料內容實際結束的地方,判斷那裡印的是不是「(續次頁)」,依照頁面順序回傳一個布林值\
+陣列(true=是續次頁、這筆記錄還沒結束,false=不是續次頁、這筆記錄在這頁結束),陣列長度必須跟頁數一樣多。"""
+
+CONTINUATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "continuation_flags": {"type": "array", "items": {"type": "boolean"}},
+    },
+    "required": ["continuation_flags"],
+    "additionalProperties": False,
+}
+
+
+def _detect_continuation_chunk(files: list[tuple[bytes, str | None]]) -> list[bool]:
+    content_parts = [{"type": "text", "text": CONTINUATION_PROMPT}]
+    for content, mime_type in files:
+        b64 = base64.b64encode(content).decode("ascii")
+        content_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime_type or 'image/jpeg'};base64,{b64}"}})
+
+    payload = {
+        "model": settings.OPENAI_MODEL,
+        "messages": [{"role": "user", "content": content_parts}],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "continuation_detection", "strict": True, "schema": CONTINUATION_SCHEMA},
+        },
+        "max_tokens": 2048,
+    }
+    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
+
+    try:
+        resp = httpx.post(OPENAI_ENDPOINT, headers=headers, json=payload, timeout=120.0)
+        resp.raise_for_status()
+        data = resp.json()
+        text = (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+        flags = json.loads(text).get("continuation_flags") or []
+    except (httpx.HTTPError, json.JSONDecodeError):
+        # Best-effort: if detection fails, treat every page in this chunk as
+        # "continues" so they collapse into one group rather than being scattered
+        # into spurious extra groups - the user can still split them apart manually.
+        flags = [True] * len(files)
+
+    if len(flags) != len(files):
+        flags = (flags + [True] * len(files))[: len(files)]
+    return flags
+
+
+def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> list[int]:
+    """Returns a 1-based group number per page, computed from the 「續次頁」 marker: a
+    page without the marker ends the current group, so the next page (if any) starts a
+    new one. This is only a suggestion - the wizard's grouping step still lets the user
+    review and override every page's group number before OCR runs."""
+    if not settings.OPENAI_API_KEY or not pages:
+        return [1] * len(pages)
+
+    chunks = [pages[i : i + PAGES_PER_CHUNK] for i in range(0, len(pages), PAGES_PER_CHUNK)]
+    flags: list[bool] = []
+    for chunk in chunks:
+        flags.extend(_detect_continuation_chunk(chunk))
+
+    groups = []
+    group = 1
+    for flag in flags:
+        groups.append(group)
+        if not flag:
+            group += 1
+    return groups
