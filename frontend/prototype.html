@@ -1212,12 +1212,12 @@ function renderCaseSplitStep0() {
     "批次匯入(自動分案件)",
     `
     <div class="helper-text" style="margin-bottom:10px">
-      適合上傳一大批混在一起、涵蓋多筆不同地號/建號的謄本掃描檔。系統會依每頁標題偵測到的地號/建號,自動建議
-      每一筆分成一個案件,審核調整後再分別建立/歸入案件;實際的所有權人明細,建案後還是要各自進到案件裡用
-      「掃描謄本匯入」精靈處理。
+      上傳全部地號的謄本檔案。系統會依每頁標題偵測到的地號,自動
+      分成每一個案件,審核調整後再分別建立/歸入案件;實際的所有權人明細,建案後還是要各自進到案件裡用
+      「掃描謄本匯入」處理。
     </div>
     <div class="field">
-      <label>選擇謄本圖片或 PDF(可多選)</label>
+      <label>選擇謄本圖片或 PDF</label>
       <input type="file" id="case-split-file-input" accept="image/*,application/pdf" multiple>
     </div>
     <div id="case-split-file-list" style="margin-top:10px"></div>
@@ -3145,14 +3145,37 @@ async function submitTitleDeedWizard() {
       }
     }
 
+    const hadParcels = d.parcels.length > 0;
     closeModal();
     toast("謄本資料已匯入", "success");
     titleDeedWizard = null;
-    renderTab("landowners");
+    await renderTab("landowners");
+    // Building records link back to a land record by matching parcel_number (see
+    // landRecordIdByParcelOwner above) - offering to continue straight into a
+    // building-deed upload right after land data lands makes that linking "just work"
+    // without the user having to remember to come back and run the wizard a second time.
+    if (hadParcels) offerBuildingImportFollowUp();
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "建立";
   }
+}
+
+function offerBuildingImportFollowUp() {
+  openModal(
+    "匯入建物謄本",
+    `
+    <p style="margin-top:0">地號資料已匯入完成。要不要現在就上傳這個案件的建物謄本？建物的「地號」欄位會自動比對剛剛匯入的地號資料。</p>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal()">稍後再說</button>
+      <button type="button" class="btn-primary" id="start-building-import-btn">立即匯入建物謄本</button>
+    </div>`,
+    { width: "480px" }
+  );
+  document.getElementById("start-building-import-btn").addEventListener("click", () => {
+    titleDeedWizard = { files: [], pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "building" };
+    renderWizardStep0();
+  });
 }
 
 /* ================= Tab: SOP ================= */
