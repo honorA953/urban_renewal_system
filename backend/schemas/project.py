@@ -36,6 +36,17 @@ class ProjectRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class BatchDeleteRequest(BaseModel):
+    project_ids: list[int] = Field(min_length=1)
+    admin_username: str
+    admin_password: str
+
+
+class BatchDeleteResult(BaseModel):
+    deleted_ids: list[int]
+    not_found_ids: list[int]
+
+
 class ConsentRatio(BaseModel):
     stage: int
     headcount_total: int

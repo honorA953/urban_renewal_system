@@ -315,8 +315,12 @@
   }
   .project-card { cursor: pointer; display: flex; flex-direction: column; gap: 12px; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
   .project-card:hover { border-color: var(--brand); box-shadow: var(--shadow-hover); transform: translateY(-3px); }
-  .project-card-top { display: flex; justify-content: space-between; align-items: flex-start; }
-  .project-card h3 { margin: 0 0 2px; font-size: 16.5px; font-weight: 700; }
+  .project-card-top { display: flex; align-items: flex-start; gap: 10px; }
+  .project-card h3 { margin: 0; font-size: 16.5px; font-weight: 700; line-height: 1.35; }
+  .project-select-checkbox {
+    width: 19px; height: 19px; flex-shrink: 0; margin-top: 2px;
+    accent-color: var(--brand); cursor: pointer;
+  }
   .project-code { font-size: 13.5px; color: var(--text-muted); }
   .status-badge { font-size: 12.5px; font-weight: 700; padding: 3px 9px; border-radius: 100px; letter-spacing: .02em; white-space: nowrap; }
   .status-active { background: var(--success-light); color: var(--success); }
@@ -528,7 +532,13 @@
     <div id="view-dashboard">
       <div class="page-header">
         <h2>案件事項</h2>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <label class="helper-text hidden" id="batch-select-all-wrap" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="batch-select-all" class="project-select-checkbox">
+            全選
+          </label>
+          <span class="helper-text hidden" id="batch-select-count"></span>
+          <button class="btn-danger hidden" id="batch-delete-btn">批量刪除</button>
           <button class="btn-secondary hidden" id="batch-import-btn">批次匯入(自動分案件)</button>
           <button class="btn-primary hidden" id="new-project-btn">+ 新增案件</button>
         </div>
@@ -686,18 +696,10 @@ function openModal(title, bodyHtml, { width = "480px" } = {}) {
       </div>
     </div>`;
   root.querySelector("#modal-close-btn").onclick = closeModal;
-  // Only close on a genuine click on the backdrop itself - checking the click/mouseup
-  // target alone isn't enough, since selecting text inside an input and releasing the
-  // drag outside the dialog also lands the mouseup (and therefore the click target) on
-  // the overlay, which would wrongly close the modal mid-edit.
-  let mouseDownOnOverlay = false;
-  const overlay = root.querySelector("#modal-overlay");
-  overlay.onmousedown = (e) => {
-    mouseDownOnOverlay = e.target.id === "modal-overlay";
-  };
-  overlay.onclick = (e) => {
-    if (e.target.id === "modal-overlay" && mouseDownOnOverlay) closeModal();
-  };
+  // Deliberately no click-outside-to-close: multi-step flows (batch import, scanned
+  // deed wizard) can represent several minutes of uploads/OCR/review, and a stray click
+  // just outside the dialog edge was silently discarding all of it. Closing now always
+  // requires an explicit action (X button, or a Cancel/上一步 button in the dialog body).
   return root;
 }
 
@@ -904,6 +906,9 @@ function showView(id) {
 
 /* ================= Dashboard ================= */
 
+let selectedProjectIds = new Set();
+let dashboardProjectsById = {};
+
 async function goToDashboard() {
   setActiveNav("dashboard");
   showView("view-dashboard");
@@ -911,6 +916,10 @@ async function goToDashboard() {
 }
 
 async function loadDashboard() {
+  selectedProjectIds = new Set();
+  dashboardProjectsById = {};
+  updateBatchDeleteBar();
+
   const grid = document.getElementById("project-grid");
   grid.innerHTML = `<div class="empty-state">載入中...</div>`;
   let projects;
@@ -940,6 +949,8 @@ async function loadDashboard() {
     })
   );
 
+  enriched.forEach(({ p }) => (dashboardProjectsById[p.id] = p));
+
   grid.innerHTML = enriched
     .map(({ p, ratio, alerts }) => {
       const pct = Math.round((p.current_stage / 9) * 100);
@@ -951,10 +962,15 @@ async function loadDashboard() {
       return `
         <div class="card project-card" data-project-id="${p.id}">
           <div class="project-card-top">
-            <div>
-              <h3>${escapeHtml(p.name)}</h3>
-              <div class="project-code">${escapeHtml(p.project_code)}${p.district ? " · " + escapeHtml(p.district) : ""}</div>
-            </div>
+            ${
+              isAdmin()
+                ? `<input type="checkbox" class="project-select-checkbox" data-select-project="${p.id}" ${selectedProjectIds.has(p.id) ? "checked" : ""}>`
+                : ""
+            }
+            <h3>${escapeHtml(p.name)}</h3>
+          </div>
+          <div class="card-meta-row">
+            <span class="project-code">${escapeHtml(p.project_code)}${p.district ? " · " + escapeHtml(p.district) : ""}</span>
             <span class="status-badge status-${p.status}">${PROJECT_STATUS_LABEL[p.status] || p.status}</span>
           </div>
           <div>
@@ -982,7 +998,95 @@ async function loadDashboard() {
       if (target) openDeleteProjectModal(target.p);
     });
   });
+
+  grid.querySelectorAll("[data-select-project]").forEach((checkbox) => {
+    checkbox.addEventListener("click", (e) => e.stopPropagation());
+    checkbox.addEventListener("change", () => {
+      const id = Number(checkbox.dataset.selectProject);
+      if (checkbox.checked) selectedProjectIds.add(id);
+      else selectedProjectIds.delete(id);
+      updateBatchDeleteBar();
+    });
+  });
 }
+
+function updateBatchDeleteBar() {
+  const btn = document.getElementById("batch-delete-btn");
+  const countEl = document.getElementById("batch-select-count");
+  const selectAllWrap = document.getElementById("batch-select-all-wrap");
+  const selectAllCheckbox = document.getElementById("batch-select-all");
+  const total = Object.keys(dashboardProjectsById).length;
+  const show = isAdmin() && selectedProjectIds.size > 0;
+
+  btn.classList.toggle("hidden", !show);
+  countEl.classList.toggle("hidden", !show);
+  selectAllWrap.classList.toggle("hidden", !show);
+  if (show) countEl.textContent = `已選取 ${selectedProjectIds.size} 個案件`;
+
+  selectAllCheckbox.checked = total > 0 && selectedProjectIds.size === total;
+  selectAllCheckbox.indeterminate = selectedProjectIds.size > 0 && selectedProjectIds.size < total;
+}
+
+function toggleSelectAllProjects(checked) {
+  if (checked) Object.keys(dashboardProjectsById).forEach((id) => selectedProjectIds.add(Number(id)));
+  else selectedProjectIds.clear();
+  document.querySelectorAll("[data-select-project]").forEach((checkbox) => {
+    checkbox.checked = selectedProjectIds.has(Number(checkbox.dataset.selectProject));
+  });
+  updateBatchDeleteBar();
+}
+
+document.getElementById("batch-select-all").addEventListener("change", (e) => toggleSelectAllProjects(e.target.checked));
+
+function openBatchDeleteModal() {
+  const ids = [...selectedProjectIds];
+  const selectedProjects = ids.map((id) => dashboardProjectsById[id]).filter(Boolean);
+  openModal(
+    "批量刪除案件",
+    `
+    <p style="margin-top:0">此操作將永久刪除以下 ${selectedProjects.length} 個案件及其底下所有地主、土地/建物資料、聯絡紀錄、文件、費用與 SOP 進度,且<strong style="color:var(--danger)">無法復原</strong>:</p>
+    <ul style="margin:0 0 14px;padding-left:20px">
+      ${selectedProjects.map((p) => `<li>${escapeHtml(p.name)}(${escapeHtml(p.project_code)})</li>`).join("")}
+    </ul>
+    <p>請輸入管理者帳號密碼以確認刪除:</p>
+    <form id="batch-delete-form">
+      <div class="field"><label>管理者帳號</label><input name="admin_username" autocomplete="off" required></div>
+      <div class="field"><label>管理者密碼</label><input name="admin_password" type="password" autocomplete="off" required></div>
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-danger">永久刪除 ${selectedProjects.length} 個案件</button>
+      </div>
+    </form>`
+  );
+  document.getElementById("batch-delete-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const submitBtn = e.target.querySelector("button[type=submit]");
+    submitBtn.disabled = true;
+    try {
+      const result = await api("/projects/batch-delete", {
+        method: "POST",
+        body: {
+          project_ids: ids,
+          admin_username: fd.get("admin_username"),
+          admin_password: fd.get("admin_password"),
+        },
+      });
+      closeModal();
+      toast(
+        result.not_found_ids.length
+          ? `已刪除 ${result.deleted_ids.length} 個案件,${result.not_found_ids.length} 個案件已不存在`
+          : `已刪除 ${result.deleted_ids.length} 個案件`,
+        "success"
+      );
+      await loadDashboard();
+    } catch (err) {
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+document.getElementById("batch-delete-btn").addEventListener("click", openBatchDeleteModal);
 
 function openDeleteProjectModal(project) {
   openModal(
@@ -1068,7 +1172,7 @@ document.getElementById("new-project-btn").addEventListener("click", async () =>
       await loadDashboard();
       await openProject(project.id);
       if (deedFiles.length) {
-        titleDeedWizard = { files: deedFiles, pages: [], step: 0, data: null, activeType: null, activeIndex: null };
+        titleDeedWizard = { files: deedFiles, pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "both" };
         renderWizardStep0();
       }
     } catch (err) {}
@@ -1089,8 +1193,8 @@ function renderCaseSplitStep0() {
     "批次匯入(自動分案件)",
     `
     <div class="helper-text" style="margin-bottom:10px">
-      適合上傳一大批混在一起、橫跨多個都更案件的謄本掃描檔。系統會先依每頁標題的鄉鎮市區/段/小段,自動建議
-      該分成幾個案件,審核調整後再分別建立/歸入案件;實際的地號/建物明細,建案後還是要各自進到案件裡用
+      適合上傳一大批混在一起、涵蓋多筆不同地號/建號的謄本掃描檔。系統會依每頁標題偵測到的地號/建號,自動建議
+      每一筆分成一個案件,審核調整後再分別建立/歸入案件;實際的所有權人明細,建案後還是要各自進到案件裡用
       「掃描謄本匯入」精靈處理。
     </div>
     <div class="field">
@@ -1154,16 +1258,35 @@ async function runDetectCases() {
     caseSplitWizard.pages = result.pages.map((p) => ({ ...p, group: p.suggested_case_group || 1 }));
 
     caseSplitWizard.groupMeta = {};
-    caseSplitWizard.pages.forEach((p) => {
-      if (!caseSplitWizard.groupMeta[p.group]) {
-        const code = p.case_label && p.sample_number ? `${p.case_label}-${p.sample_number}` : "";
-        caseSplitWizard.groupMeta[p.group] = {
-          name: p.case_label || `未命名案件${p.group}`,
-          code,
-          mode: "new",
-          existingProjectId: "",
-        };
-      }
+    const detectedGroupNumbers = [...new Set(caseSplitWizard.pages.map((p) => p.group))];
+    detectedGroupNumbers.forEach((g) => {
+      // Vote across every page in the group instead of trusting whichever page happens
+      // to appear first - a single misread digit on the first page (e.g. AI reading
+      // "0229-0002" as "0236-0000") would otherwise silently become the suggested code
+      // even though the rest of the group's pages agree on the correct value.
+      const votes = new Map();
+      caseSplitWizard.pages
+        .filter((p) => p.group === g)
+        .forEach((p) => {
+          if (!p.case_label || !p.sample_number) return;
+          const key = `${p.case_label} ${p.sample_number}`;
+          votes.set(key, (votes.get(key) || 0) + 1);
+        });
+      let bestKey = "";
+      let bestCount = 0;
+      votes.forEach((count, key) => {
+        if (count > bestCount) {
+          bestCount = count;
+          bestKey = key;
+        }
+      });
+      const [label, sampleNumber] = bestKey ? bestKey.split(" ") : ["", ""];
+      caseSplitWizard.groupMeta[g] = {
+        name: label || `未命名案件${g}`,
+        code: sampleNumber || "",
+        mode: "new",
+        existingProjectId: "",
+      };
     });
 
     await renderCaseSplitReview();
@@ -1301,6 +1424,17 @@ async function runConfirmCaseSplit() {
           body: { project_code: code, name: meta.name || code, district: "", address: "" },
         });
       }
+      // Save this group's source pages as a merged PDF document on the project right
+      // away - otherwise they only exist in this browser tab's memory, and are lost if
+      // the user doesn't immediately click "前往此案件掃描辨識" before navigating away.
+      try {
+        const fd = new FormData();
+        groupPages.forEach((p, i) => fd.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${i + 1}.jpg`));
+        fd.append("file_name", `${meta.name || project.name}.pdf`);
+        fd.append("description", "批次匯入原始掃描檔");
+        await api(`/projects/${project.id}/documents/from-images`, { method: "POST", body: fd, isForm: true });
+      } catch (err) {}
+
       results.push({ project, pageCount: groupPages.length, pages: groupPages });
     }
 
@@ -1318,7 +1452,10 @@ function renderCaseSplitResults(results) {
   openModal(
     "批次匯入完成",
     `
-    <div class="helper-text" style="margin-bottom:10px">接下來請逐一進到每個案件,用「掃描謄本匯入」精靈確認地號/建物/地主資料。</div>
+    <div class="helper-text" style="margin-bottom:10px">
+      接下來請逐一進到每個案件,用「掃描謄本匯入」精靈確認地號/建物/地主資料。每個案件的原始掃描頁面已合併成
+      一份 PDF 存進該案件的「文件」分頁,不用現在馬上處理,之後隨時可以回去下載使用。
+    </div>
     ${results
       .map(
         (r, i) => `
@@ -1342,7 +1479,7 @@ function renderCaseSplitResults(results) {
       );
       closeModal();
       await openProject(r.project.id);
-      titleDeedWizard = { files, pages: [], step: 0, data: null, activeType: null, activeIndex: null };
+      titleDeedWizard = { files, pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "both" };
       renderWizardStep0();
     });
   });
@@ -1986,7 +2123,7 @@ const PING_PER_SQM = 0.3025;
 let titleDeedWizard = null;
 
 function openTitleDeedWizard() {
-  titleDeedWizard = { files: [], pages: [], step: 0, data: null, activeType: null, activeIndex: null };
+  titleDeedWizard = { files: [], pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "both" };
   renderWizardStep0();
 }
 
@@ -2066,10 +2203,21 @@ function renderWizardStep0() {
     "掃描謄本匯入",
     `
     <div class="field">
+      <label>這次上傳的是</label>
+      <select id="wizard-record-type">
+        <option value="both" ${titleDeedWizard.recordType === "both" ? "selected" : ""}>土地+建物謄本混合(不確定就選這個)</option>
+        <option value="land" ${titleDeedWizard.recordType === "land" ? "selected" : ""}>只有土地謄本(只抓地號,不會冒出建號資料)</option>
+        <option value="building" ${titleDeedWizard.recordType === "building" ? "selected" : ""}>只有建物謄本(只抓建號,不會冒出地號資料)</option>
+      </select>
+    </div>
+    <div class="field">
       <label>選擇謄本圖片或 PDF(可多選;拍照多張時請依謄本頁面順序選取)</label>
       <input type="file" id="wizard-file-input" accept="image/*,application/pdf" multiple>
     </div>
-    <div id="wizard-file-list" style="margin-top:10px"></div>
+    <div style="margin:-4px 0 10px">
+      <button type="button" class="btn-link" id="wizard-pick-document-btn">或從本案件已上傳的文件選擇,不用重新下載再上傳</button>
+    </div>
+    <div id="wizard-file-list"></div>
     <div class="helper-text">若有多張照片或多頁,請用下方的 ▲▼ 調整順序,順序需與謄本頁面順序一致</div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
@@ -2086,8 +2234,63 @@ function renderWizardStep0() {
     e.target.value = "";
     renderWizardFileList();
   });
+  document.getElementById("wizard-record-type").addEventListener("change", (e) => {
+    titleDeedWizard.recordType = e.target.value;
+  });
+  document.getElementById("wizard-pick-document-btn").addEventListener("click", openWizardDocumentPicker);
   document.getElementById("wizard-start-ocr-btn").addEventListener("click", runTitleDeedOcr);
   document.getElementById("wizard-manual-group-btn").addEventListener("click", runTitleDeedSplitAndGroup);
+}
+
+async function openWizardDocumentPicker() {
+  let documents;
+  try {
+    documents = await api(`/projects/${state.currentProjectId}/documents`);
+  } catch (e) {
+    return;
+  }
+  documents = documents.filter((d) => (d.mime_type || "").startsWith("image/") || d.mime_type === "application/pdf");
+
+  openModal(
+    "從本案件文件選擇",
+    `
+    <div id="wizard-document-picker-list">
+      ${
+        documents.length
+          ? documents
+              .map(
+                (d) => `
+              <div class="record-row" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px">
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.file_name)}${d.description ? ` · ${escapeHtml(d.description)}` : ""}</span>
+                <button type="button" class="btn-primary btn-sm" data-pick-document="${d.id}">選擇</button>
+              </div>`
+              )
+              .join("")
+          : `<div class="helper-text">本案件尚未有可選擇的圖片或 PDF 文件</div>`
+      }
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="renderWizardStep0()">返回</button>
+    </div>`,
+    { width: "560px" }
+  );
+
+  document.querySelectorAll("[data-pick-document]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const doc = documents.find((d) => d.id === Number(btn.dataset.pickDocument));
+      btn.disabled = true;
+      btn.textContent = "載入中...";
+      try {
+        const res = await api(`/projects/${state.currentProjectId}/documents/${doc.id}/download`);
+        const blob = await res.blob();
+        titleDeedWizard.files.push(new File([blob], doc.file_name, { type: doc.mime_type }));
+        renderWizardStep0();
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = "選擇";
+      }
+    });
+  });
 }
 
 function renderWizardFileList() {
@@ -2143,6 +2346,7 @@ async function runTitleDeedOcr() {
   try {
     const fd = new FormData();
     titleDeedWizard.files.forEach((f) => fd.append("files", f));
+    fd.append("record_type", titleDeedWizard.recordType);
     const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
 
     if (result.job.status !== "completed") {
@@ -2274,6 +2478,7 @@ async function runGroupedTitleDeedOcr() {
       const groupPages = titleDeedWizard.pages.filter((p) => p.group === groupNumber);
       const fd = new FormData();
       groupPages.forEach((p, i) => fd.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${p.page_number}.png`));
+      fd.append("record_type", titleDeedWizard.recordType);
 
       try {
         const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
@@ -2326,7 +2531,10 @@ function renderWizardStepOverview() {
     <div id="wizard-parcel-list" style="margin:6px 0"></div>
     <button type="button" class="btn-secondary btn-sm" id="wizard-add-parcel-btn">+ 新增地號</button>
 
-    <div class="helper-text" style="font-weight:600;margin-top:18px">建物建號(${d.buildings.length})</div>
+    <div class="helper-text" style="font-weight:600;margin-top:18px;display:flex;justify-content:space-between;align-items:center">
+      <span>建物建號(${d.buildings.length})</span>
+      ${d.buildings.length ? `<button type="button" class="btn-link" style="color:var(--danger)" id="wizard-remove-all-buildings-btn">全部刪除</button>` : ""}
+    </div>
     <div id="wizard-building-list" style="margin:6px 0"></div>
     <button type="button" class="btn-secondary btn-sm" id="wizard-add-building-btn">+ 新增建號</button>
 
@@ -2362,6 +2570,13 @@ function renderWizardStepOverview() {
     titleDeedWizard.step = 3;
     renderWizardStep();
   });
+  const removeAllBuildingsBtn = document.getElementById("wizard-remove-all-buildings-btn");
+  if (removeAllBuildingsBtn) {
+    removeAllBuildingsBtn.addEventListener("click", () => {
+      d.buildings = [];
+      renderWizardStepOverview();
+    });
+  }
   document.getElementById("wizard-add-encumbrance-btn").addEventListener("click", () => {
     d.encumbrances = readEncumbranceRows("wizard-encumbrances");
     d.encumbrances.push({ registration_order: "", applies_to_parcels: "", right_type: "", right_holder: "", debtor_info: "" });
@@ -2520,6 +2735,45 @@ function readOwnerRowsContainer(containerId, prefix) {
     .filter((o) => o.owner_name);
 }
 
+// Lets the user attach a separate file (e.g. a building's own 建物謄本, uploaded apart
+// from whatever land-deed batch this record originally came from) and re-run OCR/AI
+// extraction scoped to just that one file, overwriting only this single record's
+// fields - instead of having to redo the whole multi-record wizard batch, or type
+// everything in by hand, when one record's source document wasn't part of the original
+// upload.
+function openWizardSingleRecordRescan(recordType, record, rerender) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*,application/pdf";
+  input.multiple = true;
+  input.addEventListener("change", async () => {
+    if (!input.files.length) return;
+    const btn = document.getElementById("wizard-rescan-btn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "辨識中...";
+    }
+    try {
+      const fd = new FormData();
+      Array.from(input.files).forEach((f) => fd.append("files", f));
+      fd.append("record_type", recordType === "parcel" ? "land" : "building");
+      const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
+      const normalized = normalizeTitleDeedData(result.data);
+      const list = recordType === "parcel" ? normalized.parcels : normalized.buildings;
+      if (list.length) {
+        Object.assign(record, list[0]);
+        toast("已重新辨識,請核對欄位", "success");
+      } else {
+        toast(`這份檔案沒有偵測到${recordType === "parcel" ? "地號" : "建物"}資料`, "error");
+      }
+    } catch (e) {
+    } finally {
+      rerender();
+    }
+  });
+  input.click();
+}
+
 /* ---- Step 2: 土地所有權部 ---- */
 
 function renderWizardStepParcelEditor() {
@@ -2529,6 +2783,9 @@ function renderWizardStepParcelEditor() {
     "掃描謄本匯入",
     `
     ${wizardProgressHtml(`地號編輯(第 ${idx + 1} / ${titleDeedWizard.data.parcels.length} 筆)`)}
+    <div style="margin-bottom:10px">
+      <button type="button" class="btn-secondary btn-sm" id="wizard-rescan-btn">重新上傳這一筆的謄本檔案並辨識</button>
+    </div>
     <form id="wizard-step-form" autocomplete="off">
       <div class="field-row">
         <div class="field"><label>鄉鎮市區</label><input name="township" value="${escapeHtml(p.township)}" autocomplete="off"></div>
@@ -2551,6 +2808,10 @@ function renderWizardStepParcelEditor() {
 
   const currentAreaSqm = () => Number(document.getElementById("wizard-parcel-area").value) || null;
   renderOwnerRowsContainer("wizard-land-owners", p.owners, "lo", currentAreaSqm());
+
+  document.getElementById("wizard-rescan-btn").addEventListener("click", () => {
+    openWizardSingleRecordRescan("parcel", p, renderWizardStepParcelEditor);
+  });
 
   document.getElementById("wizard-add-land-owner-btn").addEventListener("click", () => {
     p.owners = readOwnerRowsContainer("wizard-land-owners", "lo");
@@ -2624,6 +2885,9 @@ function renderWizardStepBuildingEditor() {
     "掃描謄本匯入",
     `
     ${wizardProgressHtml(`建號編輯(第 ${idx + 1} / ${titleDeedWizard.data.buildings.length} 筆)`)}
+    <div style="margin-bottom:10px">
+      <button type="button" class="btn-secondary btn-sm" id="wizard-rescan-btn">重新上傳這一筆的建物謄本檔案並辨識</button>
+    </div>
     <form id="wizard-step-form" autocomplete="off">
       <div class="field-row">
         <div class="field"><label>建號</label><input name="building_number" value="${escapeHtml(b.building_number)}" autocomplete="off"></div>
@@ -2658,6 +2922,9 @@ function renderWizardStepBuildingEditor() {
     null;
   renderOwnerRowsContainer("wizard-building-owners", b.owners, "bo", currentAreaSqm());
 
+  document.getElementById("wizard-rescan-btn").addEventListener("click", () => {
+    openWizardSingleRecordRescan("building", b, renderWizardStepBuildingEditor);
+  });
   document.getElementById("wizard-add-building-owner-btn").addEventListener("click", () => {
     b.owners = readOwnerRowsContainer("wizard-building-owners", "bo");
     b.owners.push({ registration_order: "", owner_name: "", ownership_numerator: 1, ownership_denominator: 1, address: "" });

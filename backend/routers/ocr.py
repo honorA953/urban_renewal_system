@@ -2,7 +2,7 @@ import base64
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -66,13 +66,20 @@ def split_pages_for_grouping(
 def extract_title_deed_job(
     project_id: int,
     files: list[UploadFile] = File(...),
+    record_type: str = Form("both"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_staff_or_admin),
 ):
     """Runs structured extraction on 1+ scanned pages of a title deed (images or PDFs,
     in the given order), synchronously via OpenAI. Every uploaded page is also saved as
-    a project document for traceability. The result is a best-effort suggestion for the
+    a project document for traceability. record_type ("land"/"building"/"both") tells the
+    model which section(s) this batch actually contains, so e.g. a land-only upload
+    doesn't get a spurious buildings entry conjured out of land-page content (or vice
+    versa) - the frontend lets the user declare this upfront since they always know
+    which kind of deed they're uploading. The result is a best-effort suggestion for the
     frontend's step-by-step review wizard."""
+    if record_type not in ("land", "building", "both"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid record_type")
     project = get_project_or_404(db, project_id)
 
     job = OcrJob(project_id=project_id, status="processing", job_type="title_deed")
@@ -106,7 +113,7 @@ def extract_title_deed_job(
         for doc in documents:
             with open(doc.file_path, "rb") as f:
                 file_payload.append((f.read(), doc.mime_type))
-        parsed, warning = extract_title_deed(file_payload)
+        parsed, warning = extract_title_deed(file_payload, record_type=record_type)
     except (OcrError, OSError) as exc:
         job.status = "failed"
         job.error_message = str(exc)
@@ -125,6 +132,7 @@ def extract_title_deed_job(
     # several parcels/buildings still gets labeled, just with all of them joined.
     labels = [f"地號{p['parcel_number']}" for p in parsed["land_parcels"] if p.get("parcel_number")]
     labels += [f"建號{b['building_number']}" for b in parsed["buildings"] if b.get("building_number")]
+    labels = list(dict.fromkeys(labels))  # de-dupe while preserving order, in case extraction ever repeats a parcel/building
     if labels:
         archive_label = "、".join(labels)
         for i, doc in enumerate(documents):

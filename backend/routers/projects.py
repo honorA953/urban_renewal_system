@@ -11,7 +11,8 @@ from deps import get_current_user, require_admin, require_staff_or_admin
 from models.project import Project, ProjectMember
 from models.sop import SopStage
 from models.user import User
-from schemas.project import ConsentRatio, ProjectCreate, ProjectRead, ProjectUpdate
+from schemas.project import BatchDeleteRequest, BatchDeleteResult, ConsentRatio, ProjectCreate, ProjectRead, ProjectUpdate
+from security import verify_password
 from utils.consent_ratio import calculate_consent_ratio
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -92,6 +93,40 @@ def update_project(
     db.commit()
     db.refresh(project)
     return project
+
+
+@router.post("/batch-delete", response_model=BatchDeleteResult)
+def batch_delete_projects(
+    payload: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Deletes several projects at once - same irreversible cascade delete as
+    delete_project() below, applied per project. Requires re-entering a real admin
+    account's username/password in the request body as an extra confirmation step on
+    top of already holding an admin JWT (require_admin) - this guards against e.g. an
+    already-unlocked admin browser tab being used for a bulk delete by whoever is
+    physically at the keyboard. The password mismatch case uses 403, not 401: the
+    frontend treats any 401 as "session expired" and force-logs-out the current user,
+    which would be wrong here since the JWT itself is still perfectly valid."""
+    admin_user = db.scalar(select(User).where(User.username == payload.admin_username))
+    if admin_user is None or admin_user.role != "admin" or not verify_password(payload.admin_password, admin_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="管理者帳號或密碼錯誤")
+
+    deleted_ids: list[int] = []
+    not_found_ids: list[int] = []
+    for project_id in payload.project_ids:
+        project = db.get(Project, project_id)
+        if project is None:
+            not_found_ids.append(project_id)
+            continue
+        upload_dir = os.path.join(settings.UPLOAD_DIR, project.project_code)
+        if os.path.isdir(upload_dir):
+            shutil.rmtree(upload_dir, ignore_errors=True)
+        db.delete(project)
+        deleted_ids.append(project_id)
+    db.commit()
+    return BatchDeleteResult(deleted_ids=deleted_ids, not_found_ids=not_found_ids)
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)

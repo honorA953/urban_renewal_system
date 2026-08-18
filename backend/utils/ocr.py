@@ -1,31 +1,46 @@
 import base64
 import io
 import json
+import re
 import time
 
 import fitz
 import httpx
+import numpy as np
 from PIL import Image
+from rapidocr_onnxruntime import RapidOCR
 
 from config import settings
 
 OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 
-EXTRACTION_PROMPT = """你是台灣地政士助理。使用者會依序提供 1 到多張圖片或 PDF,這些是同一份謄本文件的連續頁面。\
-這份文件可能是「單一地號/建號」的謄本,也可能是「批次謄本」——同一份文件裡連續印著好幾筆不同地號、好幾筆不同建號\
-(例如信義區祥和段三小段0242-0000、0250-0000...等多筆地號依序印在同一份 PDF 裡),每筆地號/建號底下又可能有一長串\
-繼承共有人(常見一筆地號有 10 位以上所有權人,分散在好幾頁)。請通盤閱讀所有頁面後,依照提供的 JSON schema 回傳結構化\
-結果。
+EXTRACTION_PROMPT = """你是台灣地政士助理。以下會依序提供同一份謄本文件連續頁面、經本地 OCR 引擎辨識出的原始文字\
+內容(不是圖片)。這份文件可能是「單一地號/建號」的謄本,也可能是「批次謄本」——同一份文件裡連續印著好幾筆不同地號、\
+好幾筆不同建號(例如信義區祥和段三小段0242-0000、0250-0000...等多筆地號依序印在同一份 PDF 裡),每筆地號/建號底下\
+又可能有一長串繼承共有人(常見一筆地號有 10 位以上所有權人,分散在好幾頁)。請通盤閱讀所有頁面後,依照提供的 JSON \
+schema 回傳結構化結果。
+
+OCR 文字品質提醒:這些掃描件背景印有防偽浮水印,OCR 有時會把浮水印紋路誤判成一串沒有意義的英數字雜訊(例如\
+「DCDDdDDDdDdDADCDdDDdDDdDdDDdDdCDDDQDD」這種夾雜在正常文字行之間的重複亂碼),請自行判斷、忽略這類雜訊,絕對不要\
+當成真實資料填入任何欄位;OCR 也可能把個別字認錯(例如「日」認成「白」、「義」認成「羲」),請依上下文合理判斷還原\
+正確字,不要照單全收。
 
 重要規則:
-- 文件中每出現一次新的地號標題(例如「XX段XX小段0242-0000地號」),就代表開始一筆新的土地資料,請在 land_parcels \
-陣列中新增一個項目,不要把不同地號的欄位混在一起。同一地號底下不論分幾頁列出多少位共有人,都要收進同一筆地號項目的 \
-owners 陣列裡,不可遺漏任何一位。
-- 同樣地,每出現一次新的建號標題,就在 buildings 陣列中新增一個項目,建物所有權人的收錄規則同上。
+- 每一頁最上方都會印出「XX段XX小段0242-0000地號」這樣的標題,這是每頁都會重複列印的頁首(跟頁次欄位一樣逐頁重印),\
+不代表每次看到標題文字就是新的一筆——真正決定是否為新地號的關鍵,是標題裡的地號數字本身有沒有換成不同號碼。同一筆\
+地號的所有權人清單常橫跨好幾頁,每一頁都會重複印同樣的標題文字,這些頁面全部算同一筆,收進同一個 land_parcels 項目\
+的 owners 陣列裡,不可遺漏任何一位;只有當地號數字真的變成不同號碼時,才代表開始一筆新的土地資料,才在 land_parcels \
+陣列中新增一個項目,絕對不要把同一個地號因為標題文字在好幾頁重複出現,就重複建立好幾筆一模一樣的項目。
+- 同樣地,建號標題也是逐頁重複列印,判斷是否為新的一筆要看建號數字本身有沒有換,不是看標題文字有沒有再次出現;\
+建物所有權人的收錄規則同上,同一建號絕對不要因為標題重複出現在好幾頁就重複建立。
 - 登記次序請填「登記次序:」後面的實際值(例如「0002」),不要填每筆記錄前面括號內的流水編號(例如「(0001)」),\
 這兩者不是同一個東西。
 - 面積、地價、權利範圍等數字或分數欄位前後常有 * 字元作為版面對齊填充(例如「****134.00平方公尺」、\
 「**********4分之1**********」),這些 * 不是資料的一部分,請忽略,只填實際的數字/文字內容。
+- owners 的 ownership_numerator/ownership_denominator 只能取自單獨一行的「權利範圍:」欄位(目前的持分),\
+絕對不要跟「歷次取得權利範圍:」欄位搞混——後者是這位所有權人「以前某一次取得時」的歷史持分紀錄(同一人底下\
+常常會有好幾筆不同數字的歷次取得權利範圍,分別對應不同次取得的時間點),不是現在的持分,不可以拿來當作\
+ownership_numerator/ownership_denominator。
 - 他項權利部(抵押權等)不分屬哪個地號/建號,一律收錄進最外層的 encumbrances 陣列,並在 applies_to_parcels \
 欄位依原文寫出對應的地號/建號(可能是單一筆、多筆、或「全部」)。
 
@@ -39,8 +54,10 @@ owners 陣列裡,不可遺漏任何一位。
      - registration_order:登記次序(例如「0157」)
      - owner_name:所有權人姓名
      - id_number:所有權人統一編號(身分證字號)
-     - ownership_numerator:權利範圍分子(例如「10000000分之10364」中的 10364)
-     - ownership_denominator:權利範圍分母(例如「10000000分之10364」中的 10000000)
+     - ownership_numerator:「權利範圍:」欄位的分子(例如「10000000分之10364」中的 10364;不是「歷次取得\
+權利範圍:」欄位)
+     - ownership_denominator:「權利範圍:」欄位的分母(例如「10000000分之10364」中的 10000000;不是「歷次\
+取得權利範圍:」欄位)
      - address:所有權人戶籍地址
 
 2. encumbrances(他項權利部,陣列,可能有 0 到多筆;沒有的話回傳空陣列 []):
@@ -61,8 +78,8 @@ owners 陣列裡,不可遺漏任何一位。
    - owners(陣列,若這筆建物沒有所有權部則回傳空陣列 []):
      - registration_order:登記次序
      - owner_name:所有權人姓名
-     - ownership_numerator:權利範圍分子
-     - ownership_denominator:權利範圍分母
+     - ownership_numerator:「權利範圍:」欄位的分子(不是「歷次取得權利範圍:」欄位)
+     - ownership_denominator:「權利範圍:」欄位的分母(不是「歷次取得權利範圍:」欄位)
      - address:所有權人戶籍地址
 
 找不到、看不清楚、或文件上沒有的欄位一律填 null(陣列則填空陣列 []),絕對不要用臆測值填補。"""
@@ -212,17 +229,43 @@ def _flatten_to_pages(files: list[tuple[bytes, str | None]]) -> list[tuple[bytes
     return pages
 
 
-def extract_title_deed(files: list[tuple[bytes, str | None]]) -> tuple[dict, str | None]:
-    """Sends 1+ scanned pages (in the given order) to OpenAI and asks it to return the
-    title-deed sections as structured JSON. The pages may be a single 地號/建號's title
-    deed, or a batch covering many parcels/buildings - either shape is returned as
-    land_parcels/buildings arrays. Multi-page PDFs are first split into per-page images,
-    then large page counts are processed in chunks of PAGES_PER_CHUNK and merged (by
-    parcel_number / building_number) to avoid per-request quality breakdown. Each chunk
-    already retries once internally on failure; if a chunk still fails, the other
-    chunks' results are kept and a warning is returned alongside the data instead of
-    discarding everything. Returns (data, warning_message_or_None). Every field is a
-    suggestion for the user to review before saving, not an authoritative value."""
+def merge_pages_to_pdf(pages: list[tuple[bytes, str | None]]) -> bytes:
+    """The inverse of _expand_pdf_pages(): combines page images back into a single PDF,
+    one page image per PDF page. Used to give a batch-import case group a durable, findable
+    home as a normal project document right after it's split off - without this the
+    original scan pages only exist transiently in the browser tab that ran the split, and
+    are lost the moment that tab is closed or navigated away from without immediately
+    running the OCR wizard on them. Page size is derived from each image's pixel
+    dimensions at PDF_RENDER_DPI, matching how _expand_pdf_pages originally rendered them
+    - this keeps a page merged from a PDF-sourced image the same physical size a PDF
+    viewer would show, and produces a reasonable approximation for images that were
+    directly uploaded (not from a PDF) too."""
+    doc = fitz.open()
+    for content, _mime_type in pages:
+        img = Image.open(io.BytesIO(content))
+        width_pt = img.width * 72 / PDF_RENDER_DPI
+        height_pt = img.height * 72 / PDF_RENDER_DPI
+        page = doc.new_page(width=width_pt, height=height_pt)
+        page.insert_image(page.rect, stream=content)
+    return doc.tobytes()
+
+
+def extract_title_deed(files: list[tuple[bytes, str | None]], record_type: str = "both") -> tuple[dict, str | None]:
+    """OCRs 1+ scanned pages (in the given order) locally, then sends the recognized
+    text to OpenAI and asks it to return the title-deed sections as structured JSON. The
+    pages may be a single 地號/建號's title deed, or a batch covering many
+    parcels/buildings - either shape is returned as
+    land_parcels/buildings arrays. record_type ("land"/"building"/"both") tells the
+    model which section(s) the batch actually contains, so it doesn't invent a spurious
+    entry of the excluded type out of misread content (e.g. treating a land page's
+    parcel_number as if it belonged to a building record). Multi-page PDFs are first
+    split into per-page images, then large page counts are processed in chunks of
+    PAGES_PER_CHUNK and merged (by parcel_number / building_number) to avoid per-request
+    quality breakdown. Each chunk already retries once internally on failure; if a chunk
+    still fails, the other chunks' results are kept and a warning is returned alongside
+    the data instead of discarding everything. Returns (data, warning_message_or_None).
+    Every field is a suggestion for the user to review before saving, not an
+    authoritative value."""
     if not settings.OPENAI_API_KEY:
         raise OcrError("尚未設定 OPENAI_API_KEY,請聯絡系統管理員設定 OCR 金鑰後再試")
     if not files:
@@ -235,7 +278,7 @@ def extract_title_deed(files: list[tuple[bytes, str | None]]) -> tuple[dict, str
     failed_chunks = []
     for i, chunk in enumerate(chunks):
         try:
-            results.append(_extract_title_deed_chunk(chunk))
+            results.append(_extract_title_deed_chunk(chunk, record_type))
         except OcrError as exc:
             failed_chunks.append((i, exc))
 
@@ -298,20 +341,58 @@ def _merge_extractions(chunk_results: list[dict]) -> dict:
     return {"land_parcels": land_parcels, "encumbrances": encumbrances, "buildings": buildings}
 
 
-def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]]) -> dict:
-    content_parts = [{"type": "text", "text": EXTRACTION_PROMPT}]
-    for content, mime_type in files:
-        b64 = base64.b64encode(content).decode("ascii")
-        content_parts.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime_type or 'image/jpeg'};base64,{b64}"},
-            }
-        )
+# Loading RapidOCR's models takes a couple seconds - doing that once per process and
+# reusing the engine avoids paying that cost on every single page.
+_OCR_ENGINE: RapidOCR | None = None
+
+
+def _get_ocr_engine() -> RapidOCR:
+    global _OCR_ENGINE
+    if _OCR_ENGINE is None:
+        _OCR_ENGINE = RapidOCR()
+    return _OCR_ENGINE
+
+
+def _ocr_page_text(content: bytes) -> str:
+    """Runs local OCR on one page image and returns its recognized text lines, one per
+    line, in the reading order RapidOCR detects them in. Garbled noise from these scans'
+    background security watermark sometimes gets picked up as spurious text lines -
+    that's left as-is for the downstream OpenAI call to recognize and ignore, rather
+    than trying to filter it heuristically here and risking real text getting dropped."""
+    img = Image.open(io.BytesIO(content)).convert("RGB")
+    result, _ = _get_ocr_engine()(np.array(img))
+    return "\n".join(line[1] for line in result) if result else ""
+
+
+# Appended to EXTRACTION_PROMPT when the caller already knows which section(s) a batch
+# contains (the frontend asks the user upfront) - telling the model to not even attempt
+# the excluded type is more reliable than extracting both and discarding one, because it
+# stops the model from ever conjuring a spurious entry of the excluded type out of
+# misread/ambiguous content in the first place (e.g. a land page's parcel_number
+# bleeding into a fabricated buildings entry).
+_RECORD_TYPE_INSTRUCTIONS = {
+    "land": "\n\n這一批文件只有土地謄本,不會有建物謄本:buildings 一律回傳空陣列 [],絕對不要自己臆測或拼湊出建物資料。",
+    "building": "\n\n這一批文件只有建物謄本,不會有土地謄本:land_parcels 一律回傳空陣列 [],絕對不要自己臆測或拼湊出土地資料。",
+    "both": "",
+}
+
+
+def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type: str = "both") -> dict:
+    # Pages are OCR'd locally first (see _ocr_page_text) instead of sending the raw
+    # images to a vision model - a dedicated OCR engine reads dense small print (parcel
+    # numbers, ID numbers, ownership fractions) far more reliably than a vision LLM
+    # skimming a downsized page image. The model's job here is purely to organize and
+    # sanity-check already-recognized text, not to also read characters off pixels.
+    page_texts = [_ocr_page_text(content) for content, _ in files]
+    pages_block = "\n\n".join(
+        f"----- 第 {i + 1} 頁 OCR 文字 -----\n{text or '(本頁 OCR 沒有讀到文字)'}"
+        for i, text in enumerate(page_texts)
+    )
+    prompt = EXTRACTION_PROMPT + _RECORD_TYPE_INSTRUCTIONS.get(record_type, "")
 
     payload = {
         "model": settings.OPENAI_MODEL,
-        "messages": [{"role": "user", "content": content_parts}],
+        "messages": [{"role": "user", "content": f"{prompt}\n\n{pages_block}"}],
         "response_format": {
             "type": "json_schema",
             "json_schema": {"name": "title_deed_extraction", "strict": True, "schema": RESPONSE_SCHEMA},
@@ -518,18 +599,24 @@ def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[int]
 # ---- Auto-grouping by 都更案件 (urban renewal case) via the page title ----
 #
 # Every page's title has two lines: the document type (「土地登記第三類謄本(地號全部)」
-# or 「建物登記第三類謄本(建物全部)」), then 「XX區XX段XX小段XX地號/建號」. Pages from the
-# same urban renewal case share the same 鄉鎮市區+段+小段 even though the specific
-# 地號/建號 differs page to page - that's the signal used here to guess which pages
-# belong together, analogous to how detect_page_groups() uses the 頁次 field one level
-# down (per parcel/building instead of per case).
+# or 「建物登記第三類謄本(建物全部)」), then 「XX區XX段XX小段XX地號/建號」. In this system a
+# "案件" is one 地號/建號, not one whole urban-renewal project area - a batch upload
+# routinely contains several different 地號 that all sit in the same 鄉鎮市區+段+小段
+# (e.g. 0223-0000, 0229-0001, 0229-0002 all under 信義區祥和段三小段), so the location
+# text alone can't tell them apart. The signal used here is the same one
+# detect_page_groups() uses one level down: a change in the specific 地號/建號 number
+# starts a new group - except here it's read via regex off locally-OCR'd text (see
+# _parse_case_header) instead of asking a vision model, because both the title and the
+# 頁次 field are in a fixed, rigid printed format that doesn't need an LLM to parse, and
+# doing it locally means no OpenAI call (no per-page cost, no shared-quota rate limit -
+# a batch of a few dozen pages was routinely blowing through the org's 200k
+# tokens-per-minute cap and silently losing whole chunks of pages to "detection
+# failed").
 #
-# Both the title and the 頁次 field live in the same fixed header area at the very top
-# of every page (unlike the old 續次頁-marker approach, whose position on the page
-# varied with how much content that page had), so both detectors only ever need to
-# look at a small strip - cropping to it cuts the image size (and therefore upload
-# time, processing time, and token/rate-limit pressure) by roughly 6-7x with no loss of
-# the information either prompt actually needs.
+# The title and the 頁次 field live in the same fixed header area at the very top of
+# every page (unlike the old 續次頁-marker approach, whose position on the page varied
+# with how much content that page had), so cropping to a small top strip before OCR
+# keeps each page's OCR pass fast without losing either field.
 TOP_STRIP_CROP_FRACTION = 0.15
 
 
@@ -546,108 +633,124 @@ def _crop_top_strip(content: bytes, fraction: float = TOP_STRIP_CROP_FRACTION) -
     return buf.getvalue()
 
 
-CASE_LOCATION_PROMPT = """以下是依序排列的台灣土地/建物登記謄本頁面。每一頁最上方的標題通常是兩行:\
-第一行是文件類型(例如「土地登記第三類謄本(地號全部)」或「建物登記第三類謄本(建物全部)」),第二行是\
-「XX區XX段XX小段XX地號」或「XX區XX段XX小段XX建號」這種格式。
-
-請針對每一頁:
-1. location:讀出標題第二行的「鄉鎮市區+段+小段」部分,不要包含最後面的地號或建號數字本身\
-(例如「信義區祥和段三小段0242-0000地號」只取「信義區祥和段三小段」)。
-2. sample_number:讀出標題第二行最後面的地號或建號數字本身(例如「信義區祥和段三小段0242-0000地號」\
-取「0242-0000」)。
-
-如果這頁看不出標題或無法判斷,兩個欄位都回傳空字串。依照頁面順序回傳一個陣列,長度必須跟頁數一樣多。"""
-
-CASE_LOCATION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "pages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string"},
-                    "sample_number": {"type": "string"},
-                },
-                "required": ["location", "sample_number"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    "required": ["pages"],
-    "additionalProperties": False,
-}
+# Matches titles like 「信義區祥和段三小段0249-0000地號」or 「板橋區松雲段00102-000建號」.
+# 小段 is optional - many 謄本 don't have one. 地號/建號 also matches with the simplified
+# 号 glyph (「地号」/「建号」), which some pages get OCR'd as instead of 號.
+_CASE_TITLE_PATTERN = re.compile(
+    r"(?P<location>[一-鿿]{1,4}(?:市|區|鄉|鎮)[一-鿿]{1,8}段(?:[一-鿿]{1,6}小段)?)"
+    r"(?P<number>\d{3,6}-\d{3,6})\s*(?:地[號号]|建[號号])"
+)
+_DIGITS_PATTERN = re.compile(r"(\d{4,6})")
+# Anchors on the 列印時間 line's own date/time digits (「115年04月10日」) rather than the
+# 「列印時間」label text - real OCR output showed that label getting misread in several
+# different, unpredictable ways (「列」->「岁」, 「間」->「周」, or missing entirely), while
+# the digits next to 年/月/日 came through correctly every time across dozens of real
+# pages. 年/月/日 are common, visually distinct characters unlikely to all get misread
+# together, making this a much sturdier anchor than the label text was.
+_PRINT_TIME_LINE_PATTERN = re.compile(r"\d{2,3}年\d{1,2}月\d{1,2}日")
 
 
-def _detect_case_location_chunk(files: list[tuple[bytes, str | None]]) -> list[tuple[str, str]] | None:
-    """Returns None (rather than a guessed value) if detection fails after retrying -
-    same reasoning as _detect_continuation_chunk: silently defaulting to "unknown, so
-    assume same case" is exactly what let a batch spanning several real cases collapse
-    into one invisible-failure group. On success, returns (location, sample_number) per
-    page - sample_number is the specific 地號/建號 printed on that page, kept only for
-    suggesting a project code, never used to decide grouping (many different 地號/建號
-    legitimately share one case)."""
-    content_parts = [{"type": "text", "text": CASE_LOCATION_PROMPT}]
-    for content, mime_type in files:
-        cropped = _crop_top_strip(content)
-        b64 = base64.b64encode(cropped).decode("ascii")
-        content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+def _find_page_sequence(text: str) -> int | None:
+    """Finds the 頁次 field's numeric value by position: it's always printed on the line
+    immediately after 列印時間 (located via _PRINT_TIME_LINE_PATTERN - see its comment for
+    why), so this pulls the first run of digits off that next line regardless of what
+    頁次's own label got misread as (「頁」->「真」, 「次」->「欠」, or garbled beyond
+    recognition). Returns None if no 列印時間 line (or no digits on the line after it) was
+    found - the caller treats that as "unknown", not "definitely page 1"."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if _PRINT_TIME_LINE_PATTERN.search(line) and i + 1 < len(lines):
+            match = _DIGITS_PATTERN.search(lines[i + 1])
+            return int(match.group(1)) if match else None
+    return None
 
-    payload = {
-        "model": settings.OPENAI_MODEL,
-        "messages": [{"role": "user", "content": content_parts}],
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "case_location_detection", "strict": True, "schema": CASE_LOCATION_SCHEMA},
-        },
-        "max_tokens": 4096,
-    }
 
-    try:
-        parsed = _call_openai_structured(payload)
-    except OcrError:
-        return None
+def _parse_case_header(text: str) -> tuple[str, str, bool]:
+    """Pulls this page's (地點, 地號/建號, is_first_page) straight out of its OCR'd
+    header text. On success, is_first_page (是否「頁次:000001」, see _find_page_sequence)
+    is what detect_case_groups() uses to decide group boundaries - comparing 地號/建號
+    strings directly was tried first and turned out too fragile: a single misread digit
+    in a multi-digit 地號 (e.g. a vision model conflating the adjacent 頁次 field and
+    reading "0230-0000"/"000003" as if "0230-0003" was the parcel number) silently
+    fractured one real group into two. is_first_page only needs a binary "is this
+    000001 or not" judgment. location and sample_number are kept only for suggesting a
+    readable case name/code, not used for the boundary."""
+    # OCR sometimes splits the title across two detected lines right at the 小段
+    # boundary (e.g. 「信義區祥和段」 / 「小段0250-0000地號」as separate lines) - flatten
+    # newlines before matching so the title pattern still catches it as one string.
+    # _find_page_sequence below needs the original line structure, so this flattened
+    # copy is only used for the title search.
+    flattened = text.replace("\n", "")
+    location, sample_number = "", ""
+    for match in _CASE_TITLE_PATTERN.finditer(flattened):
+        # Skip 「共同保地號:」/「共同保建號:」cross-reference lines lower in the header -
+        # they're a different parcel/building than this page's own title and can appear
+        # without a 市/區/鄉/鎮 prefix, but guard anyway in case a document's OCR text
+        # ever lines them up in a way that matches.
+        prefix = flattened[max(0, match.start() - 6) : match.start()]
+        if "共同" in prefix:
+            continue
+        location, sample_number = match.group("location"), match.group("number")
+        break
 
-    entries = parsed.get("pages") or []
-    results = [(e.get("location") or "", e.get("sample_number") or "") for e in entries]
-    if len(results) != len(files):
-        results = (results + [("", "")] * len(files))[: len(files)]
-    return results
+    seq = _find_page_sequence(text)
+    is_first_page = True if seq is None else seq == 1  # unknown defaults to "new group" - safer than a silent merge
+    return location, sample_number, is_first_page
 
 
 def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tuple[int, str, str]], str | None]:
     """Returns ([(1-based case group number, detected location label, sample 地號/建號),
-    ...], optional warning). A page whose detected location differs from the previous
-    page's (and isn't empty) starts a new group; an empty/undetected label just
-    continues whatever group is current. If detection fails for some pages even after
-    retrying, those pages are forced into their own group with a "(偵測失敗)" label
-    instead of being silently merged into whatever group was current, and a warning
-    names which pages need manual review. Only a suggestion either way - the
-    batch-import review step lets the user move pages between groups and rename each
-    group before any project gets created."""
-    if not settings.OPENAI_API_KEY or not pages:
-        return [(1, "", "")] * len(pages), None
+    ...], optional warning). A "案件" here is one 地號/建號: a page whose 頁次 reads
+    000001 starts a new group; any other 頁次 value continues whatever group is current.
+    location/sample_number play no part in the boundary - they're only carried along to
+    suggest a readable case name/code. Detection runs entirely locally (OCR + regex, see
+    _parse_case_header) - no OpenAI call, no per-page cost, no shared rate limit. If a
+    page's header can't be parsed (OCR failure or unexpected format), that page is
+    forced to start its own new group instead of being silently merged into whatever
+    group was current, and a warning names which pages need manual review. Only a
+    suggestion either way - the batch-import review step lets the user move pages
+    between groups and rename each group before any project gets created."""
+    if not pages:
+        return [], None
 
-    chunks = [pages[i : i + PAGES_PER_CHUNK] for i in range(0, len(pages), PAGES_PER_CHUNK)]
-    entries: list[tuple[str, str]] = []
-    failed_ranges = []
-    for i, chunk in enumerate(chunks):
-        result = _detect_case_location_chunk(chunk)
-        if result is None:
-            result = [("(偵測失敗)", "")] * len(chunk)
-            start = i * PAGES_PER_CHUNK + 1
-            failed_ranges.append(f"第{start}-{start + len(chunk) - 1}頁")
-        entries.extend(result)
+    entries: list[tuple[str, str, bool]] = []
+    failed_pages: list[int] = []
+    raw_texts: list[str] = []  # TEMP DEBUG
+    for i, (content, _mime_type) in enumerate(pages):
+        try:
+            text = _ocr_page_text(_crop_top_strip(content))
+            raw_texts.append(text)  # TEMP DEBUG
+            entries.append(_parse_case_header(text))
+        except Exception as exc:
+            print(f"[detect_case_groups] page {i + 1} OCR/parse failed: {exc}", flush=True)
+            raw_texts.append("")  # TEMP DEBUG
+            entries.append(("(偵測失敗)", "", True))
+            failed_pages.append(i + 1)
 
     grouped: list[tuple[int, str, str]] = []
     group = 1
-    current_label = ""
-    for i, (label, sample_number) in enumerate(entries):
-        if i > 0 and label and label != current_label:
+    for i, (label, sample_number, is_first_page) in enumerate(entries):
+        if i > 0 and is_first_page:
             group += 1
-        if label:
-            current_label = label
         grouped.append((group, label, sample_number))
 
-    warning = f"{'、'.join(failed_ranges)}自動分案偵測失敗,已強制獨立成一組,請務必手動確認分組" if failed_ranges else None
+    # TEMP DEBUG - remove once the case-split grouping issue is diagnosed. Prints what
+    # each page was actually detected as (including the raw OCR text and the matched
+    # 頁次 digits) so a live log-tail can show exactly which page the OCR/regex misread
+    # instead of guessing from the UI's end result.
+    print("[detect_case_groups] per-page detection:", flush=True)
+    for i, ((group_no, label, sample_number), (_l, _s, is_first_page)) in enumerate(zip(grouped, entries)):
+        seq = _find_page_sequence(raw_texts[i])
+        print(
+            f"  page {i + 1}: group={group_no} location={label!r} sample_number={sample_number!r} "
+            f"is_first_page={is_first_page} 頁次={seq!r}",
+            flush=True,
+        )
+        print(f"    raw_ocr={raw_texts[i]!r}", flush=True)
+
+    warning = (
+        f"第{'、'.join(str(p) for p in failed_pages)}頁自動分案偵測失敗,已強制獨立成一組,請務必手動確認分組"
+        if failed_pages
+        else None
+    )
     return grouped, warning

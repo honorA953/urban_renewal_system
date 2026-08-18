@@ -16,10 +16,10 @@ def detect_cases_for_batch_import(
     current_user: User = Depends(require_staff_or_admin),
 ):
     """Splits an uploaded batch (images/PDFs) into per-page images and guesses which
-    都更案件 (urban renewal case) each page belongs to, by reading the 鄉鎮市區/段/小段
-    printed in each page's title. Not scoped to a project - this runs before the user
-    has decided which project(s) the batch even belongs to, as the first step of
-    batch-importing a mixed pile of scanned title deeds."""
+    都更案件 (urban renewal case, one 地號/建號 in this system) each page belongs to, by
+    reading the 頁次 field printed in each page's header. Not scoped to a project - this
+    runs before the user has decided which project(s) the batch even belongs to, as the
+    first step of batch-importing a mixed pile of scanned title deeds."""
     file_payload = [(upload.file.read(), upload.content_type) for upload in files]
     try:
         pages = _flatten_to_pages(file_payload)
