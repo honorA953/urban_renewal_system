@@ -452,6 +452,19 @@
     main { padding: 18px 14px 40px; }
     .navbar { padding: 0 14px; gap: 12px; }
     .login-card { width: 100%; padding: 34px 24px; }
+    /* Narrow screens: stack the page title above its action buttons instead of
+       squeezing them onto one row (which forced button text to wrap mid-word). */
+    .page-header { flex-direction: column; align-items: stretch; gap: 10px; }
+    .page-header > div { flex-wrap: wrap; }
+    .page-header > div > button { flex: 1 1 auto; white-space: nowrap; }
+    /* The login footer is absolutely pinned to the bottom of a 100vh container on
+       desktop, which looks fine there - but on mobile, when the on-screen keyboard
+       opens and shrinks the visible viewport, the vertically-centered login card ends
+       up overlapping this pinned footer. Let it flow normally below the card instead,
+       and let the page scroll if needed, so there's no fixed element for anything to
+       collide with. */
+    #view-login { min-height: 100vh; height: auto; align-items: flex-start; padding: 40px 16px 24px; overflow-y: auto; }
+    .login-footer { position: static; margin-top: 24px; text-align: center; }
   }
 </style>
 </head>
