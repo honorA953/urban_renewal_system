@@ -450,7 +450,13 @@
 
   @media (max-width: 640px) {
     main { padding: 18px 14px 40px; }
-    .navbar { padding: 0 14px; gap: 12px; }
+    /* Desktop navbar sizing (72px tall, 54px logo, 21px brand text) doesn't leave
+       enough room next to the 案件總覽 nav button and the avatar/theme-toggle on a
+       phone-width screen - shrink everything down together. */
+    .navbar { padding: 0 12px; gap: 10px; height: 56px; }
+    .navbar .brand-dot img { height: 34px; }
+    .navbar .brand .brand-text { font-size: 15.5px; }
+    .nav-link { padding: 6px 10px; font-size: 13px; }
     .login-card { width: 100%; padding: 34px 24px; }
     /* Narrow screens: stack the page title above its action buttons instead of
        squeezing them onto one row (which forced button text to wrap mid-word). */
