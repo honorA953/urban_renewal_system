@@ -250,6 +250,30 @@ def merge_pages_to_pdf(pages: list[tuple[bytes, str | None]]) -> bytes:
     return doc.tobytes()
 
 
+def downscale_for_preview(content: bytes, max_dimension: int = 1000, quality: int = 65) -> bytes:
+    """Shrinks a page image for use as a lightweight preview - e.g. the batch-import
+    case-split review grid only ever displays these at ~110px tall, so there's no need
+    to ship the full ~200-DPI page (several MB each, since these are dense scans with a
+    repeating watermark that compresses poorly). Returning the untouched original for a
+    batch of a few dozen pages made that response payload huge (100+MB), which was
+    painfully slow to actually download over a remote/mobile connection (e.g. through a
+    Tailscale Funnel) even though the server had already finished processing and logged
+    the request as complete. Falls back to the original bytes if the image can't be
+    decoded, rather than dropping the page."""
+    try:
+        img = Image.open(io.BytesIO(content))
+        img.load()
+    except Exception:
+        return content
+    img = img.convert("RGB")
+    if max(img.width, img.height) > max_dimension:
+        scale = max_dimension / max(img.width, img.height)
+        img = img.resize((max(1, int(img.width * scale)), max(1, int(img.height * scale))), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
 def extract_title_deed(files: list[tuple[bytes, str | None]], record_type: str = "both") -> tuple[dict, str | None]:
     """OCRs 1+ scanned pages (in the given order) locally, then sends the recognized
     text to OpenAI and asks it to return the title-deed sections as structured JSON. The

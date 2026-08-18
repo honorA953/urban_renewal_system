@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from deps import require_staff_or_admin
 from models.user import User
 from schemas.ocr import CaseDetectResult, CasePagePreview
-from utils.ocr import OcrError, _flatten_to_pages, detect_case_groups
+from utils.ocr import OcrError, _flatten_to_pages, detect_case_groups, downscale_for_preview
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
 
@@ -26,11 +26,15 @@ def detect_cases_for_batch_import(
     except OcrError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     groups, warning = detect_case_groups(pages)
+    # Downscaled for the review grid's benefit only - detect_case_groups() above already
+    # ran its own OCR against the full-resolution pages, so shrinking the preview here
+    # doesn't affect grouping accuracy. Always JPEG now regardless of the original
+    # format, since downscale_for_preview() re-encodes to JPEG.
     previews = [
         CasePagePreview(
             page_number=i + 1,
-            image_base64=base64.b64encode(content).decode("ascii"),
-            mime_type=mime_type or "image/png",
+            image_base64=base64.b64encode(downscale_for_preview(content)).decode("ascii"),
+            mime_type="image/jpeg",
             suggested_case_group=groups[i][0],
             case_label=groups[i][1],
             sample_number=groups[i][2],
