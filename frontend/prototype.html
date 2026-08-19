@@ -2214,12 +2214,32 @@ function normalizeTitleDeedData(raw) {
 
 function renderWizardStep() {
   const steps = {
-    1: renderWizardStepOverview,
     2: renderWizardStepParcelEditor,
     3: renderWizardStepBuildingEditor,
     4: renderWizardStepConfirm,
+    5: renderWizardStepOtherRights,
   };
   steps[titleDeedWizard.step]();
+}
+
+// Routes to the first thing the user needs to review after OCR completes: walk through
+// detected 地號 one at a time, then 建號 one at a time, and only land on the 他項權利
+// step (which also offers manually adding any 地號/建號 the AI missed) once both are
+// exhausted - there's no more "總覽" list screen to land on first.
+function startWizardReview() {
+  const d = titleDeedWizard.data;
+  if (d.parcels.length) {
+    titleDeedWizard.activeType = "parcel";
+    titleDeedWizard.activeIndex = 0;
+    titleDeedWizard.step = 2;
+  } else if (d.buildings.length) {
+    titleDeedWizard.activeType = "building";
+    titleDeedWizard.activeIndex = 0;
+    titleDeedWizard.step = 3;
+  } else {
+    titleDeedWizard.step = 5;
+  }
+  renderWizardStep();
 }
 
 /* ---- Step 0: upload + reorder ---- */
@@ -2398,8 +2418,7 @@ async function runTitleDeedOcr() {
       titleDeedWizard.data = normalizeTitleDeedData(result.data);
       toast("辨識完成,請逐步核對每個區塊", "success");
     }
-    titleDeedWizard.step = 1;
-    renderWizardStep();
+    startWizardReview();
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "開始辨識";
@@ -2539,8 +2558,7 @@ async function runGroupedTitleDeedOcr() {
     } else {
       toast("分組辨識完成,請逐步核對每個區塊", "success");
     }
-    titleDeedWizard.step = 1;
-    renderWizardStep();
+    startWizardReview();
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "開始辨識";
@@ -2557,40 +2575,43 @@ function blankBuilding() {
   return { building_number: "", building_address: "", parcel_number: "", total_floors: "", floor: "", total_area_sqm: "", floor_area_sqm: "", owners: [] };
 }
 
-function renderWizardStepOverview() {
+// Last stop before the final confirm screen - by the time the user gets here they've
+// already stepped through every detected 地號/建號 one at a time (see
+// startWizardReview/advanceFromParcel/advanceFromBuilding), so this only needs to cover
+// what those per-record screens don't: 他項權利部 (not tied to a single 地號/建號) and a
+// safety net for manually adding a record the AI missed entirely.
+function renderWizardStepOtherRights() {
   const d = titleDeedWizard.data;
   openModal(
     "掃描謄本匯入",
     `
-    ${wizardProgressHtml("總覽 · 確認偵測到的地號/建號,可逐筆編輯、刪除或手動新增")}
-    <div class="final-banner warning" style="margin-bottom:14px">⚠ AI 辨識僅供參考,姓名、地址等文字有可能被誤認或臆測,請務必逐筆對照原始掃描件後再建立</div>
-    <div class="helper-text" style="font-weight:600">土地地號(${d.parcels.length})</div>
-    <div id="wizard-parcel-list" style="margin:6px 0"></div>
-    <button type="button" class="btn-secondary btn-sm" id="wizard-add-parcel-btn">+ 新增地號</button>
-
-    <div class="helper-text" style="font-weight:600;margin-top:18px;display:flex;justify-content:space-between;align-items:center">
-      <span>建物建號(${d.buildings.length})</span>
-      ${d.buildings.length ? `<button type="button" class="btn-link" style="color:var(--danger)" id="wizard-remove-all-buildings-btn">全部刪除</button>` : ""}
-    </div>
-    <div id="wizard-building-list" style="margin:6px 0"></div>
-    <button type="button" class="btn-secondary btn-sm" id="wizard-add-building-btn">+ 新增建號</button>
-
-    <div class="helper-text" style="font-weight:600;margin-top:18px">他項權利部(${d.encumbrances.length})</div>
+    ${wizardProgressHtml("他項權利部 · 確認他項權利資料,並可補建 AI 漏掉的地號/建號")}
+    <div class="helper-text" style="font-weight:600">他項權利部(${d.encumbrances.length})</div>
     <div id="wizard-encumbrances" style="margin:6px 0"></div>
     <button type="button" class="btn-secondary btn-sm" id="wizard-add-encumbrance-btn">+ 新增他項權利</button>
     <div class="helper-text" style="margin-top:6px">若本謄本沒有他項權利部,可直接略過</div>
+
+    <div class="helper-text" style="font-weight:600;margin-top:18px">補建遺漏的地號/建號</div>
+    <div class="helper-text" style="margin-top:2px">目前已有地號 ${d.parcels.length} 筆、建號 ${d.buildings.length} 筆,如果 AI 有漏掉某一筆,可以在這裡手動新增,新增後會直接進入編輯畫面</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button type="button" class="btn-secondary btn-sm" id="wizard-add-parcel-btn">+ 新增地號</button>
+      <button type="button" class="btn-secondary btn-sm" id="wizard-add-building-btn">+ 新增建號</button>
+    </div>
 
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-primary" id="wizard-next-btn">下一步:確認建立</button>
     </div>`,
-    { width: "660px" }
+    { width: "620px" }
   );
 
-  renderParcelList();
-  renderBuildingList();
   renderEncumbranceRows("wizard-encumbrances", d.encumbrances);
 
+  document.getElementById("wizard-add-encumbrance-btn").addEventListener("click", () => {
+    d.encumbrances = readEncumbranceRows("wizard-encumbrances");
+    d.encumbrances.push({ registration_order: "", applies_to_parcels: "", right_type: "", right_holder: "", debtor_info: "" });
+    renderEncumbranceRows("wizard-encumbrances", d.encumbrances);
+  });
   document.getElementById("wizard-add-parcel-btn").addEventListener("click", () => {
     d.encumbrances = readEncumbranceRows("wizard-encumbrances");
     d.parcels.push(blankParcel());
@@ -2606,18 +2627,6 @@ function renderWizardStepOverview() {
     titleDeedWizard.activeIndex = d.buildings.length - 1;
     titleDeedWizard.step = 3;
     renderWizardStep();
-  });
-  const removeAllBuildingsBtn = document.getElementById("wizard-remove-all-buildings-btn");
-  if (removeAllBuildingsBtn) {
-    removeAllBuildingsBtn.addEventListener("click", () => {
-      d.buildings = [];
-      renderWizardStepOverview();
-    });
-  }
-  document.getElementById("wizard-add-encumbrance-btn").addEventListener("click", () => {
-    d.encumbrances = readEncumbranceRows("wizard-encumbrances");
-    d.encumbrances.push({ registration_order: "", applies_to_parcels: "", right_type: "", right_holder: "", debtor_info: "" });
-    renderEncumbranceRows("wizard-encumbrances", d.encumbrances);
   });
   document.getElementById("wizard-next-btn").addEventListener("click", () => {
     d.encumbrances = readEncumbranceRows("wizard-encumbrances");
@@ -2639,73 +2648,6 @@ function buildingSummaryLabel(b) {
   return `建號 ${b.building_number || "-"} · ${b.building_address || "(未填寫門牌)"} · ${b.owners.length} 位所有權人`;
 }
 
-function renderParcelList() {
-  const wrap = document.getElementById("wizard-parcel-list");
-  const parcels = titleDeedWizard.data.parcels;
-  if (!parcels.length) {
-    wrap.innerHTML = `<div class="helper-text">尚未偵測到地號,可按下方按鈕手動新增</div>`;
-    return;
-  }
-  wrap.innerHTML = parcels
-    .map(
-      (p, i) => `
-      <div class="record-row" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px">
-        <span style="flex:1">${escapeHtml(parcelSummaryLabel(p))}</span>
-        <button type="button" class="btn-secondary btn-sm" data-edit-parcel="${i}">編輯</button>
-        <button type="button" class="btn-danger btn-sm" data-remove-parcel="${i}">刪除</button>
-      </div>`
-    )
-    .join("");
-  wrap.querySelectorAll("[data-edit-parcel]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      titleDeedWizard.data.encumbrances = readEncumbranceRows("wizard-encumbrances");
-      titleDeedWizard.activeType = "parcel";
-      titleDeedWizard.activeIndex = Number(btn.dataset.editParcel);
-      titleDeedWizard.step = 2;
-      renderWizardStep();
-    });
-  });
-  wrap.querySelectorAll("[data-remove-parcel]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      parcels.splice(Number(btn.dataset.removeParcel), 1);
-      renderParcelList();
-    });
-  });
-}
-
-function renderBuildingList() {
-  const wrap = document.getElementById("wizard-building-list");
-  const buildings = titleDeedWizard.data.buildings;
-  if (!buildings.length) {
-    wrap.innerHTML = `<div class="helper-text">尚未偵測到建號,可按下方按鈕手動新增</div>`;
-    return;
-  }
-  wrap.innerHTML = buildings
-    .map(
-      (b, i) => `
-      <div class="record-row" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px">
-        <span style="flex:1">${escapeHtml(buildingSummaryLabel(b))}</span>
-        <button type="button" class="btn-secondary btn-sm" data-edit-building="${i}">編輯</button>
-        <button type="button" class="btn-danger btn-sm" data-remove-building="${i}">刪除</button>
-      </div>`
-    )
-    .join("");
-  wrap.querySelectorAll("[data-edit-building]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      titleDeedWizard.data.encumbrances = readEncumbranceRows("wizard-encumbrances");
-      titleDeedWizard.activeType = "building";
-      titleDeedWizard.activeIndex = Number(btn.dataset.editBuilding);
-      titleDeedWizard.step = 3;
-      renderWizardStep();
-    });
-  });
-  wrap.querySelectorAll("[data-remove-building]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      buildings.splice(Number(btn.dataset.removeBuilding), 1);
-      renderBuildingList();
-    });
-  });
-}
 
 /* ---- Shared: owner rows (land 所有權部 / building 所有權部) ---- */
 
@@ -2813,13 +2755,34 @@ function openWizardSingleRecordRescan(recordType, record, rerender) {
 
 /* ---- Step 2: 土地所有權部 ---- */
 
+// Advances past the parcel at `idx` (already saved or already deleted by the caller) to
+// whatever comes next: the next parcel if there is one, the first building if not, or
+// the 他項權利 catch-all step once both are exhausted.
+function advanceFromParcel(idx) {
+  const d = titleDeedWizard.data;
+  if (idx < d.parcels.length) {
+    titleDeedWizard.activeIndex = idx;
+    renderWizardStep();
+  } else if (d.buildings.length) {
+    titleDeedWizard.activeType = "building";
+    titleDeedWizard.activeIndex = 0;
+    titleDeedWizard.step = 3;
+    renderWizardStep();
+  } else {
+    titleDeedWizard.step = 5;
+    renderWizardStep();
+  }
+}
+
 function renderWizardStepParcelEditor() {
   const idx = titleDeedWizard.activeIndex;
-  const p = titleDeedWizard.data.parcels[idx];
+  const parcels = titleDeedWizard.data.parcels;
+  const p = parcels[idx];
+  const isLast = idx === parcels.length - 1;
   openModal(
     "掃描謄本匯入",
     `
-    ${wizardProgressHtml(`地號編輯(第 ${idx + 1} / ${titleDeedWizard.data.parcels.length} 筆)`)}
+    ${wizardProgressHtml(`地號編輯(第 ${idx + 1} / ${parcels.length} 筆)`)}
     <div style="margin-bottom:10px">
       <button type="button" class="btn-secondary btn-sm" id="wizard-rescan-btn">重新上傳這一筆的謄本檔案並辨識</button>
     </div>
@@ -2838,7 +2801,10 @@ function renderWizardStepParcelEditor() {
     <div id="wizard-land-owners" style="margin:6px 0"></div>
     <button type="button" class="btn-secondary btn-sm" id="wizard-add-land-owner-btn">+ 新增共有人</button>
     <div class="modal-footer">
-      <button type="button" class="btn-secondary" id="wizard-back-btn">返回列表</button>
+      <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+      <button type="button" class="btn-danger" id="wizard-delete-parcel-btn">刪除此筆</button>
+      ${idx > 0 ? `<button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一筆</button>` : ""}
+      <button type="button" class="btn-primary" id="wizard-next-item-btn">${isLast ? "下一步" : "下一筆地號"}</button>
     </div>`,
     { width: "660px" }
   );
@@ -2862,7 +2828,8 @@ function renderWizardStepParcelEditor() {
     });
     renderOwnerRowsContainer("wizard-land-owners", p.owners, "lo", currentAreaSqm());
   });
-  document.getElementById("wizard-back-btn").addEventListener("click", () => {
+
+  const saveCurrentParcel = () => {
     const fd = new FormData(document.getElementById("wizard-step-form"));
     Object.assign(p, {
       township: (fd.get("township") || "").trim(),
@@ -2872,8 +2839,23 @@ function renderWizardStepParcelEditor() {
       area_sqm: fd.get("area_sqm") || "",
     });
     p.owners = readOwnerRowsContainer("wizard-land-owners", "lo");
-    titleDeedWizard.step = 1;
-    renderWizardStep();
+  };
+
+  const prevBtn = document.getElementById("wizard-prev-item-btn");
+  if (prevBtn) {
+    prevBtn.addEventListener("click", () => {
+      saveCurrentParcel();
+      titleDeedWizard.activeIndex = idx - 1;
+      renderWizardStep();
+    });
+  }
+  document.getElementById("wizard-next-item-btn").addEventListener("click", () => {
+    saveCurrentParcel();
+    advanceFromParcel(idx + 1);
+  });
+  document.getElementById("wizard-delete-parcel-btn").addEventListener("click", () => {
+    parcels.splice(idx, 1);
+    advanceFromParcel(idx);
   });
 }
 
@@ -2915,13 +2897,29 @@ function readEncumbranceRows(containerId) {
 
 /* ---- Step 3: 建物標示部 + 建物所有權部(單筆建號編輯) ---- */
 
+// Advances past the building at `idx` to the next building, or to the 他項權利
+// catch-all step once buildings are exhausted (buildings are always reviewed after all
+// parcels, so there's no further record type to fall through to here).
+function advanceFromBuilding(idx) {
+  const d = titleDeedWizard.data;
+  if (idx < d.buildings.length) {
+    titleDeedWizard.activeIndex = idx;
+    renderWizardStep();
+  } else {
+    titleDeedWizard.step = 5;
+    renderWizardStep();
+  }
+}
+
 function renderWizardStepBuildingEditor() {
   const idx = titleDeedWizard.activeIndex;
-  const b = titleDeedWizard.data.buildings[idx];
+  const buildings = titleDeedWizard.data.buildings;
+  const b = buildings[idx];
+  const isLast = idx === buildings.length - 1;
   openModal(
     "掃描謄本匯入",
     `
-    ${wizardProgressHtml(`建號編輯(第 ${idx + 1} / ${titleDeedWizard.data.buildings.length} 筆)`)}
+    ${wizardProgressHtml(`建號編輯(第 ${idx + 1} / ${buildings.length} 筆)`)}
     <div style="margin-bottom:10px">
       <button type="button" class="btn-secondary btn-sm" id="wizard-rescan-btn">重新上傳這一筆的建物謄本檔案並辨識</button>
     </div>
@@ -2948,7 +2946,10 @@ function renderWizardStepBuildingEditor() {
     <div id="wizard-building-owners" style="margin:6px 0"></div>
     <button type="button" class="btn-secondary btn-sm" id="wizard-add-building-owner-btn">+ 新增共有人</button>
     <div class="modal-footer">
-      <button type="button" class="btn-secondary" id="wizard-back-btn">返回列表</button>
+      <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+      <button type="button" class="btn-danger" id="wizard-delete-building-btn">刪除此筆</button>
+      ${idx > 0 ? `<button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一筆</button>` : ""}
+      <button type="button" class="btn-primary" id="wizard-next-item-btn">${isLast ? "下一步" : "下一筆建號"}</button>
     </div>`,
     { width: "660px" }
   );
@@ -2967,7 +2968,8 @@ function renderWizardStepBuildingEditor() {
     b.owners.push({ registration_order: "", owner_name: "", ownership_numerator: 1, ownership_denominator: 1, address: "" });
     renderOwnerRowsContainer("wizard-building-owners", b.owners, "bo", currentAreaSqm());
   });
-  document.getElementById("wizard-back-btn").addEventListener("click", () => {
+
+  const saveCurrentBuilding = () => {
     const fd = new FormData(document.getElementById("wizard-step-form"));
     Object.assign(b, {
       building_number: (fd.get("building_number") || "").trim(),
@@ -2979,8 +2981,23 @@ function renderWizardStepBuildingEditor() {
       floor_area_sqm: fd.get("floor_area_sqm") || "",
     });
     b.owners = readOwnerRowsContainer("wizard-building-owners", "bo");
-    titleDeedWizard.step = 1;
-    renderWizardStep();
+  };
+
+  const prevBtn = document.getElementById("wizard-prev-item-btn");
+  if (prevBtn) {
+    prevBtn.addEventListener("click", () => {
+      saveCurrentBuilding();
+      titleDeedWizard.activeIndex = idx - 1;
+      renderWizardStep();
+    });
+  }
+  document.getElementById("wizard-next-item-btn").addEventListener("click", () => {
+    saveCurrentBuilding();
+    advanceFromBuilding(idx + 1);
+  });
+  document.getElementById("wizard-delete-building-btn").addEventListener("click", () => {
+    buildings.splice(idx, 1);
+    advanceFromBuilding(idx);
   });
 }
 
@@ -3034,7 +3051,7 @@ function renderWizardStepConfirm() {
   );
 
   document.getElementById("wizard-prev-btn").addEventListener("click", () => {
-    titleDeedWizard.step = 1;
+    titleDeedWizard.step = 5;
     renderWizardStep();
   });
   document.getElementById("wizard-confirm-btn").addEventListener("click", submitTitleDeedWizard);
