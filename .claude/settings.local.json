@@ -33,7 +33,16 @@
       "WebSearch",
       "Bash(docker compose *)",
       "PowerShell(Get-Command gh -ErrorAction SilentlyContinue)",
-      "PowerShell(gh auth status 2>&1)"
+      "PowerShell(gh auth status 2>&1)",
+      "Bash(python \"C:\\\\Users\\\\HONOR\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-HONOR-Desktop-------\\\\b982aa8a-694b-4c55-82c5-07f31cd4048e\\\\scratchpad\\\\render_pdf.py\")",
+      "Bash(echo \"exitcode=$?\")",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -X POST http://localhost:8000/auth/login -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"Admin@2026\"}')",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const j=JSON.parse\\(d\\);console.log\\(j.access_token||JSON.stringify\\(j\\)\\)}\\)\")",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(echo \"scp test\")",
+      "Bash(scp \"C:\\\\Users\\\\HONOR\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-HONOR-Desktop-------\\\\b982aa8a-694b-4c55-82c5-07f31cd4048e\\\\scratchpad\\\\scp_test.txt\" DS220:/volume1/docker/urban_renewal/scp_test.txt)",
+      "Bash(ssh DS220 \"cat /volume1/docker/urban_renewal/scp_test.txt && rm /volume1/docker/urban_renewal/scp_test.txt\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\yijun\\Projects\\urban-renewal-system"

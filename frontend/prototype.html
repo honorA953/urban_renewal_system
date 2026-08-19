@@ -562,6 +562,7 @@
           <span class="helper-text hidden" id="batch-select-count"></span>
           <button class="btn-danger hidden" id="batch-delete-btn">批量刪除</button>
           <button class="btn-secondary hidden" id="batch-import-btn">批次匯入(自動分案件)</button>
+          <button class="btn-secondary hidden" id="batch-import-buildings-btn">批次匯入建物謄本(自動比對案件)</button>
           <button class="btn-primary hidden" id="new-project-btn">+ 新增案件</button>
         </div>
       </div>
@@ -856,6 +857,7 @@ function showApp() {
   document.getElementById("nav-loginlogs-btn").classList.toggle("hidden", !isAdmin());
   document.getElementById("new-project-btn").classList.toggle("hidden", !isEditor());
   document.getElementById("batch-import-btn").classList.toggle("hidden", !isEditor());
+  document.getElementById("batch-import-buildings-btn").classList.toggle("hidden", !isEditor());
 }
 
 function renderNavUser() {
@@ -1452,7 +1454,7 @@ async function runConfirmCaseSplit() {
       try {
         const fd = new FormData();
         groupPages.forEach((p, i) => fd.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${i + 1}.jpg`));
-        fd.append("file_name", `${meta.name || project.name}.pdf`);
+        fd.append("file_name", `${project.project_code || meta.name || project.name}.pdf`);
         fd.append("description", "批次匯入原始掃描檔");
         await api(`/projects/${project.id}/documents/from-images`, { method: "POST", body: fd, isForm: true });
       } catch (err) {}
@@ -1505,6 +1507,236 @@ function renderCaseSplitResults(results) {
       renderWizardStep0();
     });
   });
+}
+
+/* ================= Batch import: building deeds, auto-matched to existing 地號 cases ================= */
+
+let buildingBatchWizard = null;
+
+document.getElementById("batch-import-buildings-btn").addEventListener("click", () => {
+  buildingBatchWizard = { files: [], groups: [] };
+  renderBuildingBatchStep0();
+});
+
+function renderBuildingBatchStep0() {
+  openModal(
+    "批次匯入建物謄本(自動比對案件)",
+    `
+    <div class="helper-text" style="margin-bottom:10px">
+      上傳一整份建物謄本(可涵蓋多筆建號)。系統會依每頁「頁次」自動拆成一筆一筆建號,讀出每筆的「建物坐落地號」,
+      拿去比對現有案件的案件代碼——比對到的會自動預選對應案件,比對不到的請在下一步手動選擇。這一步需要實際跑 AI
+      辨識(不是免費的本地判斷),頁數多會比較慢、也會花費 API 額度。
+    </div>
+    <div class="field">
+      <label>選擇建物謄本圖片或 PDF</label>
+      <input type="file" id="building-batch-file-input" accept="image/*,application/pdf" multiple>
+    </div>
+    <div id="building-batch-file-list" style="margin-top:10px"></div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+      <button type="button" class="btn-primary" id="building-batch-detect-btn">偵測建號並比對案件</button>
+    </div>`,
+    { width: "600px" }
+  );
+
+  renderBuildingBatchFileList();
+
+  document.getElementById("building-batch-file-input").addEventListener("change", (e) => {
+    buildingBatchWizard.files.push(...Array.from(e.target.files));
+    e.target.value = "";
+    renderBuildingBatchFileList();
+  });
+  document.getElementById("building-batch-detect-btn").addEventListener("click", runDetectBuildingCases);
+}
+
+function renderBuildingBatchFileList() {
+  const wrap = document.getElementById("building-batch-file-list");
+  if (!buildingBatchWizard.files.length) {
+    wrap.innerHTML = `<div class="helper-text">尚未選擇檔案</div>`;
+    return;
+  }
+  wrap.innerHTML = buildingBatchWizard.files
+    .map(
+      (f, i) => `
+      <div class="record-row" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px">
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i + 1}. ${escapeHtml(f.name)}</span>
+        <button type="button" class="btn-danger btn-sm" data-remove-file="${i}">移除</button>
+      </div>`
+    )
+    .join("");
+  wrap.querySelectorAll("[data-remove-file]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      buildingBatchWizard.files.splice(Number(btn.dataset.removeFile), 1);
+      renderBuildingBatchFileList();
+    });
+  });
+}
+
+async function runDetectBuildingCases() {
+  if (!buildingBatchWizard.files.length) {
+    toast("請先選擇至少一個檔案", "error");
+    return;
+  }
+  const btn = document.getElementById("building-batch-detect-btn");
+  btn.disabled = true;
+  btn.textContent = "辨識比對中(頁數多可能需要數分鐘)...";
+  try {
+    const fd = new FormData();
+    buildingBatchWizard.files.forEach((f) => fd.append("files", f));
+    const result = await api("/ocr/detect-building-cases", { method: "POST", body: fd, isForm: true });
+    if (result.warning) toast(result.warning, "error");
+    buildingBatchWizard.groups = result.groups.map((g) => ({ ...g, selectedProjectId: g.matched_project_id || "" }));
+    await renderBuildingBatchReview();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "偵測建號並比對案件";
+  }
+}
+
+async function renderBuildingBatchReview() {
+  let existingProjects = [];
+  try {
+    existingProjects = await api("/projects", { silent: true });
+  } catch (e) {}
+
+  openModal(
+    "批次匯入建物謄本 · 審核比對結果",
+    `
+    <div class="final-banner warning" style="margin-bottom:14px">⚠ 比對結果不一定準確,請逐筆核對「歸入案件」,沒有比對到(標示待確認)的一定要手動選擇</div>
+    <div id="building-batch-group-list"></div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="renderBuildingBatchStep0()">上一步</button>
+      <button type="button" class="btn-primary" id="building-batch-confirm-btn">確認歸檔</button>
+    </div>`,
+    { width: "760px" }
+  );
+
+  const wrap = document.getElementById("building-batch-group-list");
+  wrap.innerHTML = buildingBatchWizard.groups
+    .map((g, i) => {
+      const b = g.building || {};
+      const matched = !!g.matched_project_id;
+      return `
+      <div class="record-row" style="padding:12px;margin-bottom:10px">
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <img src="data:${g.pages[0].mime_type};base64,${g.pages[0].image_base64}" data-page-index="${i}"
+               style="width:90px;height:90px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0">
+          <div style="flex:1">
+            <div style="font-weight:700">建號 ${escapeHtml(b.building_number || "-")}(${g.pages.length} 頁)</div>
+            <div class="helper-text" style="margin-top:2px">建物坐落地號:${escapeHtml(b.parcel_number || "(未讀到)")} · 門牌:${escapeHtml(b.building_address || "-")} · ${(b.owners || []).length} 位所有權人</div>
+            <div class="helper-text" style="margin-top:4px">${matched ? `✅ 已比對到案件:${escapeHtml(g.matched_project_name)}(${escapeHtml(g.matched_project_code)})` : "⚠ 未比對到現有案件,請手動選擇"}</div>
+          </div>
+        </div>
+        <div class="field" style="margin-top:8px">
+          <label>歸入案件</label>
+          <select data-group-project="${i}">
+            <option value="">請選擇</option>
+            ${existingProjects
+              .map(
+                (p) =>
+                  `<option value="${p.id}" ${String(g.selectedProjectId) === String(p.id) ? "selected" : ""}>${escapeHtml(p.name)}(${escapeHtml(p.project_code)})</option>`
+              )
+              .join("")}
+          </select>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  wireThumbnailLightbox(
+    wrap,
+    buildingBatchWizard.groups.map((g) => g.pages[0])
+  );
+  wrap.querySelectorAll("[data-group-project]").forEach((select) => {
+    select.addEventListener("change", () => {
+      buildingBatchWizard.groups[Number(select.dataset.groupProject)].selectedProjectId = select.value;
+    });
+  });
+
+  document.getElementById("building-batch-confirm-btn").addEventListener("click", runConfirmBuildingBatchImport);
+}
+
+async function runConfirmBuildingBatchImport() {
+  const groups = buildingBatchWizard.groups;
+  if (groups.some((g) => !g.selectedProjectId)) {
+    toast("有建號還沒選擇要歸入哪個案件,請確認每一筆都已選擇", "error");
+    return;
+  }
+
+  const btn = document.getElementById("building-batch-confirm-btn");
+  btn.disabled = true;
+  const landownerCacheByProject = new Map();
+
+  try {
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      btn.textContent = `匯入中(第 ${i + 1}/${groups.length} 筆)...`;
+      const pid = Number(g.selectedProjectId);
+      const b = g.building || {};
+
+      // Archive this group's original pages as one merged PDF, same as the 地號 batch
+      // import already does - see runConfirmCaseSplit.
+      try {
+        const fd = new FormData();
+        g.pages.forEach((p, j) => fd.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${j + 1}.jpg`));
+        fd.append("file_name", `建號${b.building_number || g.group}.pdf`);
+        fd.append("description", "批次匯入建物謄本原始掃描檔");
+        await api(`/projects/${pid}/documents/from-images`, { method: "POST", body: fd, isForm: true });
+      } catch (e) {}
+
+      if (!state.projectCache[pid]) state.projectCache[pid] = {};
+      if (!state.projectCache[pid].landowners) {
+        state.projectCache[pid].landowners = await api(`/projects/${pid}/landowners`);
+      }
+      if (!landownerCacheByProject.has(pid)) landownerCacheByProject.set(pid, new Map());
+      const createdCache = landownerCacheByProject.get(pid);
+
+      // Link to the matching land record (by parcel_number) the same way
+      // submitTitleDeedWizard does, so this building doesn't just sit under a
+      // landowner unlinked from their 地號.
+      const landRecordIdByParcelOwner = new Map();
+      for (const owner of state.projectCache[pid].landowners) {
+        for (const lr of owner.land_records || []) {
+          landRecordIdByParcelOwner.set(`${(lr.parcel_number || "").trim()}::${owner.id}`, lr.id);
+        }
+      }
+
+      const floorAreaSqm = Number(b.total_area_sqm) || Number(b.floor_area_sqm) || 0;
+      const prevProjectId = state.currentProjectId;
+      state.currentProjectId = pid;
+      try {
+        for (const owner of b.owners || []) {
+          if (!owner.owner_name) continue;
+          const landownerId = await findOrCreateLandownerByOwner(owner, createdCache);
+          await api(`/projects/${pid}/landowners/${landownerId}/building-records`, {
+            method: "POST",
+            body: {
+              land_record_id: landRecordIdByParcelOwner.get(`${(b.parcel_number || "").trim()}::${landownerId}`) || null,
+              building_number: b.building_number || null,
+              address: b.building_address || null,
+              floor: b.floor || null,
+              total_floors: b.total_floors || null,
+              registration_order: owner.registration_order || null,
+              structure_area_sqm: floorAreaSqm,
+              auxiliary_area_sqm: 0,
+              common_area_sqm: 0,
+              ownership_numerator: owner.ownership_numerator || 1,
+              ownership_denominator: owner.ownership_denominator || 1,
+            },
+          });
+        }
+      } finally {
+        state.currentProjectId = prevProjectId;
+      }
+    }
+
+    closeModal();
+    toast("建物謄本已匯入完成", "success");
+    buildingBatchWizard = null;
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "確認歸檔";
+  }
 }
 
 document.getElementById("back-to-dashboard").addEventListener("click", goToDashboard);

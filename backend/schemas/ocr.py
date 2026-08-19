@@ -109,3 +109,24 @@ class PageSplitResult(BaseModel):
 class CaseDetectResult(BaseModel):
     pages: list[CasePagePreview]
     warning: str | None = None
+
+
+class BuildingGroupMatch(BaseModel):
+    """One detected 建號 group from a batch building-deed upload: its pages, the full
+    building data actually OCR'd off them (building carries owners/floors/areas etc. -
+    kept here rather than re-extracted at confirm time, since that AI call already cost
+    real time/money once), and whichever existing project (matched by project_code ==
+    building.parcel_number, the 建物坐落地號) it should probably be filed under - or
+    none, if nothing matched and a human needs to pick."""
+
+    group: int
+    pages: list[CasePagePreview]
+    building: BuildingExtraction | None = None
+    matched_project_id: int | None = None
+    matched_project_name: str = ""
+    matched_project_code: str = ""
+
+
+class BuildingCaseDetectResult(BaseModel):
+    groups: list[BuildingGroupMatch]
+    warning: str | None = None
