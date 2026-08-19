@@ -41,10 +41,14 @@ OCR 文字品質提醒:這些掃描件背景印有防偽浮水印,OCR 有時會�
 絕對不要跟「歷次取得權利範圍:」欄位搞混——後者是這位所有權人「以前某一次取得時」的歷史持分紀錄(同一人底下\
 常常會有好幾筆不同數字的歷次取得權利範圍,分別對應不同次取得的時間點),不是現在的持分,不可以拿來當作\
 ownership_numerator/ownership_denominator。
-- 他項權利部(抵押權等)不分屬哪個地號/建號,一律收錄進最外層的 encumbrances 陣列,並在 applies_to_parcels \
-欄位依原文寫出對應的地號/建號(可能是單一筆、多筆、或「全部」)。
+- 他項權利部(抵押權等)緊接在它所屬的那筆地號/建號的所有權部之後印出、在下一筆地號/建號開始之前——如果一筆他項\
+權利明確只對應到單一一筆地號(對應地號欄位只寫一個地號、且是這頁前後在講的那一筆),請直接收錄進那筆 land_parcels \
+項目自己的 encumbrances 陣列裡,不要另外放到最外層。只有當一筆他項權利明確橫跨多筆地號/建號、或原文寫「全部」\
+這種無法歸屬到單一一筆的情況,才收錄進最外層的 encumbrances 陣列,並在 applies_to_parcels 欄位依原文寫出對應的\
+地號/建號。
 
-1. land_parcels(土地標示部+所有權部,陣列,一筆地號一個項目;若整份文件完全沒有土地部分則回傳空陣列 []):
+1. land_parcels(土地標示部+所有權部+屬於這筆地號自己的他項權利部,陣列,一筆地號一個項目;若整份文件完全沒有\
+土地部分則回傳空陣列 []):
    - township:鄉鎮市區(例如「板橋區」)
    - section:地段名稱,不含行政區前綴(例如「民族段」而非「板橋區民族段」)
    - subsection:小段名稱(若有才填,很多謄本沒有小段)
@@ -59,10 +63,17 @@ ownership_numerator/ownership_denominator。
      - ownership_denominator:「權利範圍:」欄位的分母(例如「10000000分之10364」中的 10000000;不是「歷次\
 取得權利範圍:」欄位)
      - address:所有權人戶籍地址
+   - encumbrances(陣列,只放明確只屬於這筆地號自己的他項權利,沒有的話回傳空陣列 []):
+     - registration_order:登記次序
+     - applies_to_parcels:依原文填寫(通常就是這筆地號本身)
+     - right_type:權利種類(例如「最高限額抵押權」)
+     - right_holder:他項權利人(例如銀行名稱)
+     - debtor_info:債務人及債務額比例(把文件上寫的內容原文整理成一段文字)
 
-2. encumbrances(他項權利部,陣列,可能有 0 到多筆;沒有的話回傳空陣列 []):
+2. encumbrances(橫跨多筆地號/建號、或寫「全部」、無法歸屬到單一一筆地號的他項權利部,陣列,可能有 0 到多筆;\
+沒有的話回傳空陣列 []。已經歸進 land_parcels[].encumbrances 的項目不要在這裡重複):
    - registration_order:登記次序
-   - applies_to_parcels:這筆他項權利對應到的地號/建號(可能是單一筆、多筆、或「全部」,依文件原文填寫)
+   - applies_to_parcels:這筆他項權利對應到的地號/建號(可能是多筆、或「全部」,依文件原文填寫)
    - right_type:權利種類(例如「最高限額抵押權」)
    - right_holder:他項權利人(例如銀行名稱)
    - debtor_info:債務人及債務額比例(把文件上寫的內容原文整理成一段文字)
@@ -119,6 +130,19 @@ _BUILDING_OWNER_ITEM_SCHEMA = {
     "additionalProperties": False,
 }
 
+_ENCUMBRANCE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "registration_order": _n("string"),
+        "applies_to_parcels": _n("string"),
+        "right_type": _n("string"),
+        "right_holder": _n("string"),
+        "debtor_info": _n("string"),
+    },
+    "required": ["registration_order", "applies_to_parcels", "right_type", "right_holder", "debtor_info"],
+    "additionalProperties": False,
+}
+
 RESPONSE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -133,25 +157,15 @@ RESPONSE_SCHEMA = {
                     "parcel_number": _n("string"),
                     "area_sqm": _n("number"),
                     "owners": {"type": "array", "items": _LAND_OWNER_ITEM_SCHEMA},
+                    "encumbrances": {"type": "array", "items": _ENCUMBRANCE_ITEM_SCHEMA},
                 },
-                "required": ["township", "section", "subsection", "parcel_number", "area_sqm", "owners"],
+                "required": ["township", "section", "subsection", "parcel_number", "area_sqm", "owners", "encumbrances"],
                 "additionalProperties": False,
             },
         },
         "encumbrances": {
             "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "registration_order": _n("string"),
-                    "applies_to_parcels": _n("string"),
-                    "right_type": _n("string"),
-                    "right_holder": _n("string"),
-                    "debtor_info": _n("string"),
-                },
-                "required": ["registration_order", "applies_to_parcels", "right_type", "right_holder", "debtor_info"],
-                "additionalProperties": False,
-            },
+            "items": _ENCUMBRANCE_ITEM_SCHEMA,
         },
         "buildings": {
             "type": "array",
@@ -334,7 +348,9 @@ def _merge_extractions(chunk_results: list[dict]) -> dict:
     parcel_number / building_number (a single 地號/建號's owner list can span a chunk
     boundary) instead of producing duplicate entries."""
 
-    def merge_group(items_key: str, id_field: str, owner_fields: tuple[str, ...]) -> list[dict]:
+    def merge_group(
+        items_key: str, id_field: str, owner_fields: tuple[str, ...], list_fields: tuple[str, ...] = ("owners",)
+    ) -> list[dict]:
         by_id: dict[str, dict] = {}
         order: list[str] = []
         no_id: list[dict] = []
@@ -345,17 +361,23 @@ def _merge_extractions(chunk_results: list[dict]) -> dict:
                     no_id.append(item)
                     continue
                 if key not in by_id:
-                    by_id[key] = {**item, "owners": list(item.get("owners") or [])}
+                    by_id[key] = {**item, **{f: list(item.get(f) or []) for f in list_fields}}
                     order.append(key)
                 else:
                     existing = by_id[key]
-                    existing["owners"].extend(item.get("owners") or [])
+                    for f in list_fields:
+                        existing[f].extend(item.get(f) or [])
                     for field in owner_fields:
                         if not existing.get(field) and item.get(field):
                             existing[field] = item[field]
         return [by_id[k] for k in order] + no_id
 
-    land_parcels = merge_group("land_parcels", "parcel_number", ("township", "section", "subsection", "area_sqm"))
+    land_parcels = merge_group(
+        "land_parcels",
+        "parcel_number",
+        ("township", "section", "subsection", "area_sqm"),
+        list_fields=("owners", "encumbrances"),
+    )
     buildings = merge_group(
         "buildings",
         "building_number",

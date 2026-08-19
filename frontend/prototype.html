@@ -2413,6 +2413,17 @@ function normalizeTitleDeedData(raw) {
     };
   };
 
+  const toEncumbranceRow = (e) => {
+    e = e || {};
+    return {
+      registration_order: e.registration_order || "",
+      applies_to_parcels: e.applies_to_parcels || "",
+      right_type: e.right_type || "",
+      right_holder: e.right_holder || "",
+      debtor_info: e.debtor_info || "",
+    };
+  };
+
   const parcels = (raw.land_parcels || []).map((p) => ({
     township: p.township || "",
     section: p.section || "",
@@ -2420,6 +2431,7 @@ function normalizeTitleDeedData(raw) {
     parcel_number: p.parcel_number || "",
     area_sqm: p.area_sqm ?? "",
     owners: (p.owners || []).map(toLandOwnerRow),
+    encumbrances: (p.encumbrances || []).map(toEncumbranceRow),
   }));
 
   const buildings = (raw.buildings || []).map((b) => ({
@@ -2433,13 +2445,7 @@ function normalizeTitleDeedData(raw) {
     owners: (b.owners || []).map(toBuildingOwnerRow),
   }));
 
-  const encumbrances = (raw.encumbrances || []).map((e) => ({
-    registration_order: e.registration_order || "",
-    applies_to_parcels: e.applies_to_parcels || "",
-    right_type: e.right_type || "",
-    right_holder: e.right_holder || "",
-    debtor_info: e.debtor_info || "",
-  }));
+  const encumbrances = (raw.encumbrances || []).map(toEncumbranceRow);
 
   return { parcels, buildings, encumbrances };
 }
@@ -2460,6 +2466,7 @@ function renderWizardStep() {
 // exhausted - there's no more "總覽" list screen to land on first.
 function startWizardReview() {
   const d = titleDeedWizard.data;
+  titleDeedWizard.parcelSubStep = 0;
   if (d.parcels.length) {
     titleDeedWizard.activeType = "parcel";
     titleDeedWizard.activeIndex = 0;
@@ -2800,7 +2807,7 @@ async function runGroupedTitleDeedOcr() {
 /* ---- Step 1: 總覽(偵測到的地號/建號/他項權利清單) ---- */
 
 function blankParcel() {
-  return { township: "", section: "", subsection: "", parcel_number: "", area_sqm: "", owners: [] };
+  return { township: "", section: "", subsection: "", parcel_number: "", area_sqm: "", owners: [], encumbrances: [] };
 }
 
 function blankBuilding() {
@@ -2849,6 +2856,7 @@ function renderWizardStepOtherRights() {
     d.parcels.push(blankParcel());
     titleDeedWizard.activeType = "parcel";
     titleDeedWizard.activeIndex = d.parcels.length - 1;
+    titleDeedWizard.parcelSubStep = 0;
     titleDeedWizard.step = 2;
     renderWizardStep();
   });
@@ -2992,6 +3000,7 @@ function openWizardSingleRecordRescan(recordType, record, rerender) {
 // the 他項權利 catch-all step once both are exhausted.
 function advanceFromParcel(idx) {
   const d = titleDeedWizard.data;
+  titleDeedWizard.parcelSubStep = 0;
   if (idx < d.parcels.length) {
     titleDeedWizard.activeIndex = idx;
     renderWizardStep();
@@ -3006,15 +3015,23 @@ function advanceFromParcel(idx) {
   }
 }
 
+// Each 地號 is reviewed as three small sub-steps in sequence, mirroring how the deed
+// itself is actually printed (標示部 then 所有權部 then that parcel's own 他項權利部,
+// before the next 地號 starts) instead of one combined form - see
+// titleDeedWizard.parcelSubStep (0/1/2). "上一筆"/"下一筆" between whole parcels only
+// happens at the edges (sub-step 0's 上一筆, sub-step 2's 下一筆/下一步).
 function renderWizardStepParcelEditor() {
-  const idx = titleDeedWizard.activeIndex;
+  const substeps = [renderParcelDescriptionSubStep, renderParcelOwnersSubStep, renderParcelEncumbrancesSubStep];
+  substeps[titleDeedWizard.parcelSubStep || 0](titleDeedWizard.activeIndex);
+}
+
+function renderParcelDescriptionSubStep(idx) {
   const parcels = titleDeedWizard.data.parcels;
   const p = parcels[idx];
-  const isLast = idx === parcels.length - 1;
   openModal(
     "掃描謄本匯入",
     `
-    ${wizardProgressHtml(`地號編輯(第 ${idx + 1} / ${parcels.length} 筆)`)}
+    ${wizardProgressHtml(`地號編輯(第 ${idx + 1} / ${parcels.length} 筆) · 1/3 土地標示部`)}
     <div style="margin-bottom:10px">
       <button type="button" class="btn-secondary btn-sm" id="wizard-rescan-btn">重新上傳這一筆的謄本檔案並辨識</button>
     </div>
@@ -3027,26 +3044,72 @@ function renderWizardStepParcelEditor() {
         <div class="field"><label>小段</label><input name="subsection" value="${escapeHtml(p.subsection)}" autocomplete="off"></div>
         <div class="field"><label>地號</label><input name="parcel_number" value="${escapeHtml(p.parcel_number)}" autocomplete="off"></div>
       </div>
-      <div class="field"><label>土地面積(㎡)</label><input name="area_sqm" id="wizard-parcel-area" type="number" step="0.01" value="${escapeHtml(p.area_sqm)}" autocomplete="off"></div>
+      <div class="field"><label>土地面積(㎡)</label><input name="area_sqm" type="number" step="0.01" value="${escapeHtml(p.area_sqm)}" autocomplete="off"></div>
     </form>
-    <div class="helper-text" style="font-weight:600;margin-top:14px">土地所有權部</div>
-    <div id="wizard-land-owners" style="margin:6px 0"></div>
-    <button type="button" class="btn-secondary btn-sm" id="wizard-add-land-owner-btn">+ 新增共有人</button>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-danger" id="wizard-delete-parcel-btn">刪除此筆</button>
       ${idx > 0 ? `<button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一筆</button>` : ""}
-      <button type="button" class="btn-primary" id="wizard-next-item-btn">${isLast ? "下一步" : "下一筆地號"}</button>
+      <button type="button" class="btn-primary" id="wizard-next-item-btn">下一步:土地所有權部</button>
     </div>`,
-    { width: "660px" }
+    { width: "620px" }
   );
 
-  const currentAreaSqm = () => Number(document.getElementById("wizard-parcel-area").value) || null;
-  renderOwnerRowsContainer("wizard-land-owners", p.owners, "lo", currentAreaSqm());
-
   document.getElementById("wizard-rescan-btn").addEventListener("click", () => {
-    openWizardSingleRecordRescan("parcel", p, renderWizardStepParcelEditor);
+    openWizardSingleRecordRescan("parcel", p, () => renderParcelDescriptionSubStep(idx));
   });
+
+  const saveFields = () => {
+    const fd = new FormData(document.getElementById("wizard-step-form"));
+    Object.assign(p, {
+      township: (fd.get("township") || "").trim(),
+      section: (fd.get("section") || "").trim(),
+      subsection: (fd.get("subsection") || "").trim(),
+      parcel_number: (fd.get("parcel_number") || "").trim(),
+      area_sqm: fd.get("area_sqm") || "",
+    });
+  };
+
+  const prevBtn = document.getElementById("wizard-prev-item-btn");
+  if (prevBtn) {
+    prevBtn.addEventListener("click", () => {
+      saveFields();
+      titleDeedWizard.activeIndex = idx - 1;
+      titleDeedWizard.parcelSubStep = 2; // land on the previous parcel's last sub-step
+      renderWizardStep();
+    });
+  }
+  document.getElementById("wizard-next-item-btn").addEventListener("click", () => {
+    saveFields();
+    titleDeedWizard.parcelSubStep = 1;
+    renderWizardStep();
+  });
+  document.getElementById("wizard-delete-parcel-btn").addEventListener("click", () => {
+    parcels.splice(idx, 1);
+    advanceFromParcel(idx);
+  });
+}
+
+function renderParcelOwnersSubStep(idx) {
+  const parcels = titleDeedWizard.data.parcels;
+  const p = parcels[idx];
+  openModal(
+    "掃描謄本匯入",
+    `
+    ${wizardProgressHtml(`地號編輯(第 ${idx + 1} / ${parcels.length} 筆) · 2/3 土地所有權部`)}
+    <div class="helper-text" style="margin-bottom:10px">${escapeHtml(parcelSummaryLabel(p))}</div>
+    <div id="wizard-land-owners" style="margin:6px 0"></div>
+    <button type="button" class="btn-secondary btn-sm" id="wizard-add-land-owner-btn">+ 新增共有人</button>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+      <button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一步</button>
+      <button type="button" class="btn-primary" id="wizard-next-item-btn">下一步:土地他項權利部</button>
+    </div>`,
+    { width: "620px" }
+  );
+
+  const areaSqm = Number(p.area_sqm) || null;
+  renderOwnerRowsContainer("wizard-land-owners", p.owners, "lo", areaSqm);
 
   document.getElementById("wizard-add-land-owner-btn").addEventListener("click", () => {
     p.owners = readOwnerRowsContainer("wizard-land-owners", "lo");
@@ -3058,36 +3121,63 @@ function renderWizardStepParcelEditor() {
       ownership_denominator: 1,
       address: "",
     });
-    renderOwnerRowsContainer("wizard-land-owners", p.owners, "lo", currentAreaSqm());
+    renderOwnerRowsContainer("wizard-land-owners", p.owners, "lo", areaSqm);
   });
 
-  const saveCurrentParcel = () => {
-    const fd = new FormData(document.getElementById("wizard-step-form"));
-    Object.assign(p, {
-      township: (fd.get("township") || "").trim(),
-      section: (fd.get("section") || "").trim(),
-      subsection: (fd.get("subsection") || "").trim(),
-      parcel_number: (fd.get("parcel_number") || "").trim(),
-      area_sqm: fd.get("area_sqm") || "",
-    });
+  document.getElementById("wizard-prev-item-btn").addEventListener("click", () => {
     p.owners = readOwnerRowsContainer("wizard-land-owners", "lo");
-  };
-
-  const prevBtn = document.getElementById("wizard-prev-item-btn");
-  if (prevBtn) {
-    prevBtn.addEventListener("click", () => {
-      saveCurrentParcel();
-      titleDeedWizard.activeIndex = idx - 1;
-      renderWizardStep();
-    });
-  }
-  document.getElementById("wizard-next-item-btn").addEventListener("click", () => {
-    saveCurrentParcel();
-    advanceFromParcel(idx + 1);
+    titleDeedWizard.parcelSubStep = 0;
+    renderWizardStep();
   });
-  document.getElementById("wizard-delete-parcel-btn").addEventListener("click", () => {
-    parcels.splice(idx, 1);
-    advanceFromParcel(idx);
+  document.getElementById("wizard-next-item-btn").addEventListener("click", () => {
+    p.owners = readOwnerRowsContainer("wizard-land-owners", "lo");
+    titleDeedWizard.parcelSubStep = 2;
+    renderWizardStep();
+  });
+}
+
+function renderParcelEncumbrancesSubStep(idx) {
+  const parcels = titleDeedWizard.data.parcels;
+  const p = parcels[idx];
+  const isLast = idx === parcels.length - 1;
+  openModal(
+    "掃描謄本匯入",
+    `
+    ${wizardProgressHtml(`地號編輯(第 ${idx + 1} / ${parcels.length} 筆) · 3/3 土地他項權利部`)}
+    <div class="helper-text" style="margin-bottom:10px">${escapeHtml(parcelSummaryLabel(p))}</div>
+    <div id="wizard-parcel-encumbrances" style="margin:6px 0"></div>
+    <button type="button" class="btn-secondary btn-sm" id="wizard-add-parcel-encumbrance-btn">+ 新增他項權利</button>
+    <div class="helper-text" style="margin-top:6px">若這筆地號沒有他項權利部,可直接略過。跨好幾筆地號的他項權利,留到最後「他項權利部」步驟處理即可</div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+      <button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一步</button>
+      <button type="button" class="btn-primary" id="wizard-next-item-btn">${isLast ? "下一步" : "下一筆地號"}</button>
+    </div>`,
+    { width: "620px" }
+  );
+
+  renderEncumbranceRows("wizard-parcel-encumbrances", p.encumbrances);
+
+  document.getElementById("wizard-add-parcel-encumbrance-btn").addEventListener("click", () => {
+    p.encumbrances = readEncumbranceRows("wizard-parcel-encumbrances");
+    p.encumbrances.push({
+      registration_order: "",
+      applies_to_parcels: p.parcel_number || "",
+      right_type: "",
+      right_holder: "",
+      debtor_info: "",
+    });
+    renderEncumbranceRows("wizard-parcel-encumbrances", p.encumbrances);
+  });
+
+  document.getElementById("wizard-prev-item-btn").addEventListener("click", () => {
+    p.encumbrances = readEncumbranceRows("wizard-parcel-encumbrances");
+    titleDeedWizard.parcelSubStep = 1;
+    renderWizardStep();
+  });
+  document.getElementById("wizard-next-item-btn").addEventListener("click", () => {
+    p.encumbrances = readEncumbranceRows("wizard-parcel-encumbrances");
+    advanceFromParcel(idx + 1);
   });
 }
 
@@ -3243,7 +3333,7 @@ function renderWizardStepConfirm() {
           (p) =>
             `<div class="sub-detail" style="margin-top:8px">${escapeHtml(parcelSummaryLabel(p))}<br>${p.owners
               .map((o) => `${escapeHtml(o.owner_name) || "-"}(${o.ownership_numerator}/${o.ownership_denominator})`)
-              .join("、")}</div>`
+              .join("、")}${(p.encumbrances || []).length ? `<br>他項權利:${(p.encumbrances || []).map((e) => escapeHtml(e.right_type) || "-").join("、")}` : ""}</div>`
         )
         .join("")
     : `<div class="helper-text" style="margin-top:8px">(本次未包含土地資料)</div>`;
@@ -3268,7 +3358,7 @@ function renderWizardStepConfirm() {
     ${buildingsHtml}
     ${
       d.encumbrances.length
-        ? `<div class="helper-text" style="font-weight:600;margin-top:16px">他項權利(${d.encumbrances.length})</div>
+        ? `<div class="helper-text" style="font-weight:600;margin-top:16px">跨地號/建號的他項權利(${d.encumbrances.length})</div>
           <div class="sub-detail" style="margin-top:8px">
             ${d.encumbrances.map((e) => `${escapeHtml(e.right_type) || "-"} · ${escapeHtml(e.right_holder) || "-"}`).join("、")}
           </div>`
@@ -3380,6 +3470,13 @@ async function submitTitleDeedWizard() {
           },
         });
         landRecordIdByParcelOwner.set(parcelOwnerKey(p.parcel_number, landownerId), created.id);
+      }
+      // This 地號's own 他項權利部, reviewed alongside it in the wizard - submitted the
+      // same way as the cross-parcel ones below (encumbrances are project-level, not
+      // tied to a specific land_record_id in the data model either way).
+      for (const enc of p.encumbrances || []) {
+        if (!enc.right_type && !enc.right_holder) continue;
+        await api(`/projects/${pid}/encumbrances`, { method: "POST", body: enc });
       }
     }
 

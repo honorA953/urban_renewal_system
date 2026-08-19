@@ -25,6 +25,14 @@ class LandOwnershipEntry(BaseModel):
     address: str | None = None
 
 
+class EncumbranceEntry(BaseModel):
+    registration_order: str | None = None
+    applies_to_parcels: str | None = None
+    right_type: str | None = None
+    right_holder: str | None = None
+    debtor_info: str | None = None
+
+
 class LandParcelExtraction(BaseModel):
     township: str | None = None
     section: str | None = None
@@ -32,14 +40,13 @@ class LandParcelExtraction(BaseModel):
     parcel_number: str | None = None
     area_sqm: float | None = None
     owners: list[LandOwnershipEntry] = []
-
-
-class EncumbranceEntry(BaseModel):
-    registration_order: str | None = None
-    applies_to_parcels: str | None = None
-    right_type: str | None = None
-    right_holder: str | None = None
-    debtor_info: str | None = None
+    # Populated when a 他項權利 entry printed within this parcel's own pages clearly
+    # applies to just this one parcel - the model nests it here directly (based on where
+    # it physically appears in the deed) rather than the frontend having to fuzzy-match
+    # the standalone `encumbrances` list's applies_to_parcels text against parcel_number.
+    # An entry that applies to several parcels/buildings, or says 全部, stays in the
+    # top-level TitleDeedExtraction.encumbrances list instead.
+    encumbrances: list[EncumbranceEntry] = []
 
 
 class BuildingOwnershipEntry(BaseModel):
