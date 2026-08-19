@@ -3111,13 +3111,52 @@ function renderParcelEncumbrancesSubStep(idx) {
 /* ---- Step 3: 他項權利部(建立/刪除列的共用邏輯,實際編輯畫面在總覽頁) ---- */
 
 // Common values seen in 他項權利部's 權利種類 field. If a row's AI-extracted value
-// doesn't match either, it's kept as an extra selected option instead of being
-// silently discarded/forced into the wrong choice - see encumbranceRowHtml.
+// doesn't match either even after the near-match normalization below, it's kept as an
+// extra selected option instead of being silently discarded/forced into the wrong
+// choice - see encumbranceRowHtml.
 const ENCUMBRANCE_RIGHT_TYPE_OPTIONS = ["最高限額抵押權", "抵押權"];
 
+// Single-character edit distance (insert/delete/substitute) - cheap enough for these
+// short (5-7 char) right-type strings. The backend prompt already asks the model to
+// self-correct an OCR-dropped-character variant like 「最高限抵押權」(missing 額) back
+// to 「最高限額抵押權」, but this normalizes it client-side too as a safety net for
+// records extracted before that prompt fix, or on the rare case the model still misses.
+function levenshteinAtMostOne(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < shorter.length && j < longer.length) {
+    if (shorter[i] === longer[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    edits++;
+    if (edits > 1) return false;
+    if (shorter.length === longer.length) i++;
+    j++;
+  }
+  return true;
+}
+
+// debtor_info is stored as a single "分母分之分子" string (e.g. "1分之1"), matching the
+// same X分之Y convention used for ownership_numerator/denominator elsewhere in this
+// app, but is edited here as two separate number inputs - parse an existing string back
+// into {numerator, denominator} to populate them.
+function parseDebtorRatio(debtorInfo) {
+  const match = (debtorInfo || "").match(/(\d+)\s*分之\s*(\d+)/);
+  return match ? { denominator: match[1], numerator: match[2] } : { denominator: "", numerator: "" };
+}
+
 function encumbranceRowHtml(e) {
-  const currentType = e.right_type || "";
-  const isKnownType = ENCUMBRANCE_RIGHT_TYPE_OPTIONS.includes(currentType);
+  const rawType = e.right_type || "";
+  const closeMatch = ENCUMBRANCE_RIGHT_TYPE_OPTIONS.find((t) => t === rawType || levenshteinAtMostOne(rawType, t));
+  const currentType = closeMatch || rawType;
+  const isKnownType = !!closeMatch;
+  const ratio = parseDebtorRatio(e.debtor_info);
   return `
     <div class="field-row">
       <div class="field"><label>登記次序</label><input class="enc-order" value="${escapeHtml(e.registration_order)}" autocomplete="off"></div>
@@ -3136,7 +3175,14 @@ function encumbranceRowHtml(e) {
       </div>
       <div class="field"><label>他項權利人</label><input class="enc-holder" value="${escapeHtml(e.right_holder)}" autocomplete="off"></div>
     </div>
-    <div class="field"><label>債務額比例</label><input class="enc-debtor" value="${escapeHtml(e.debtor_info)}" autocomplete="off"></div>
+    <div class="field">
+      <label>債務額比例</label>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input class="enc-debtor-num" type="number" value="${escapeHtml(ratio.numerator)}" placeholder="分子" style="width:90px" autocomplete="off">
+        <span style="color:var(--text-muted)">分之</span>
+        <input class="enc-debtor-den" type="number" value="${escapeHtml(ratio.denominator)}" placeholder="分母" style="width:90px" autocomplete="off">
+      </div>
+    </div>
     <button type="button" class="btn-link btn-sm remove-wizard-row-btn">刪除此筆</button>`;
 }
 
@@ -3150,13 +3196,17 @@ function renderEncumbranceRows(containerId, list) {
 
 function readEncumbranceRows(containerId) {
   return [...document.querySelectorAll(`#${containerId} .wizard-row`)]
-    .map((row) => ({
-      registration_order: row.querySelector(".enc-order").value.trim(),
-      applies_to_parcels: row.querySelector(".enc-parcels").value.trim(),
-      right_type: row.querySelector(".enc-type").value.trim(),
-      right_holder: row.querySelector(".enc-holder").value.trim(),
-      debtor_info: row.querySelector(".enc-debtor").value.trim(),
-    }))
+    .map((row) => {
+      const numerator = row.querySelector(".enc-debtor-num").value.trim();
+      const denominator = row.querySelector(".enc-debtor-den").value.trim();
+      return {
+        registration_order: row.querySelector(".enc-order").value.trim(),
+        applies_to_parcels: row.querySelector(".enc-parcels").value.trim(),
+        right_type: row.querySelector(".enc-type").value.trim(),
+        right_holder: row.querySelector(".enc-holder").value.trim(),
+        debtor_info: numerator && denominator ? `${denominator}分之${numerator}` : "",
+      };
+    })
     .filter((e) => e.right_type || e.right_holder);
 }
 
