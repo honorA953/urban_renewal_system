@@ -68,7 +68,8 @@ ownership_numerator/ownership_denominator。
      - applies_to_parcels:依原文填寫(通常就是這筆地號本身)
      - right_type:權利種類(例如「最高限額抵押權」)
      - right_holder:他項權利人(例如銀行名稱)
-     - debtor_info:債務人及債務額比例(把文件上寫的內容原文整理成一段文字)
+     - debtor_info:「債務額比例」欄位的比例本身(例如「債權額比例:全部*********1分之1*********」只填\
+「全部1分之1」),不要填債務人姓名或其他描述文字
 
 2. encumbrances(橫跨多筆地號/建號、或寫「全部」、無法歸屬到單一一筆地號的他項權利部,陣列,可能有 0 到多筆;\
 沒有的話回傳空陣列 []。已經歸進 land_parcels[].encumbrances 的項目不要在這裡重複):
