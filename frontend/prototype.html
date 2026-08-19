@@ -2145,7 +2145,11 @@ const PING_PER_SQM = 0.3025;
 let titleDeedWizard = null;
 
 function openTitleDeedWizard() {
-  titleDeedWizard = { files: [], pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "both" };
+  // The 地主清冊 tab's entry point is always used to import 土地謄本 first (the
+  // building-import follow-up prompt after that handles buildings separately) - fixing
+  // this to "land" instead of showing the type dropdown keeps the common path simple
+  // and avoids someone accidentally leaving it on "both"/"building" here.
+  titleDeedWizard = { files: [], pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "land", lockRecordType: true };
   renderWizardStep0();
 }
 
@@ -2220,18 +2224,26 @@ function renderWizardStep() {
 
 /* ---- Step 0: upload + reorder ---- */
 
+const WIZARD_RECORD_TYPE_LABEL = { both: "土地+建物謄本混合", land: "土地謄本(地號)", building: "建物謄本(建號)" };
+
 function renderWizardStep0() {
+  const recordTypeField = titleDeedWizard.lockRecordType
+    ? `<div class="field">
+        <label>這次上傳的是</label>
+        <div class="helper-text" style="font-weight:600">${WIZARD_RECORD_TYPE_LABEL[titleDeedWizard.recordType]}</div>
+      </div>`
+    : `<div class="field">
+        <label>這次上傳的是</label>
+        <select id="wizard-record-type">
+          <option value="both" ${titleDeedWizard.recordType === "both" ? "selected" : ""}>土地+建物謄本混合(不確定就選這個)</option>
+          <option value="land" ${titleDeedWizard.recordType === "land" ? "selected" : ""}>只有土地謄本(只抓地號,不會冒出建號資料)</option>
+          <option value="building" ${titleDeedWizard.recordType === "building" ? "selected" : ""}>只有建物謄本(只抓建號,不會冒出地號資料)</option>
+        </select>
+      </div>`;
   openModal(
     "掃描謄本匯入",
     `
-    <div class="field">
-      <label>這次上傳的是</label>
-      <select id="wizard-record-type">
-        <option value="both" ${titleDeedWizard.recordType === "both" ? "selected" : ""}>土地+建物謄本混合(不確定就選這個)</option>
-        <option value="land" ${titleDeedWizard.recordType === "land" ? "selected" : ""}>只有土地謄本(只抓地號,不會冒出建號資料)</option>
-        <option value="building" ${titleDeedWizard.recordType === "building" ? "selected" : ""}>只有建物謄本(只抓建號,不會冒出地號資料)</option>
-      </select>
-    </div>
+    ${recordTypeField}
     <div class="field">
       <label>選擇謄本圖片或 PDF(可多選;拍照多張時請依謄本頁面順序選取)</label>
       <input type="file" id="wizard-file-input" accept="image/*,application/pdf" multiple>
@@ -2256,9 +2268,12 @@ function renderWizardStep0() {
     e.target.value = "";
     renderWizardFileList();
   });
-  document.getElementById("wizard-record-type").addEventListener("change", (e) => {
-    titleDeedWizard.recordType = e.target.value;
-  });
+  const recordTypeSelect = document.getElementById("wizard-record-type");
+  if (recordTypeSelect) {
+    recordTypeSelect.addEventListener("change", (e) => {
+      titleDeedWizard.recordType = e.target.value;
+    });
+  }
   document.getElementById("wizard-pick-document-btn").addEventListener("click", openWizardDocumentPicker);
   document.getElementById("wizard-start-ocr-btn").addEventListener("click", runTitleDeedOcr);
   document.getElementById("wizard-manual-group-btn").addEventListener("click", runTitleDeedSplitAndGroup);
