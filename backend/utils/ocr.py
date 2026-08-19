@@ -644,6 +644,14 @@ def detect_page_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[int]
 TOP_STRIP_CROP_FRACTION = 0.15
 
 
+# Caps the crop's width before OCR - the title/頁次 text is large, clear print, so it
+# stays perfectly legible well below the ~1654px a 200-DPI page comes in at, and a
+# smaller input measurably speeds up RapidOCR's detection pass (fewer pixels to scan),
+# which matters a lot on underpowered hardware like the NAS this batch step often runs
+# on (a dual-core Celeron, much weaker than a dev machine).
+TOP_STRIP_MAX_WIDTH = 900
+
+
 def _crop_top_strip(content: bytes, fraction: float = TOP_STRIP_CROP_FRACTION) -> bytes:
     try:
         img = Image.open(io.BytesIO(content))
@@ -652,6 +660,9 @@ def _crop_top_strip(content: bytes, fraction: float = TOP_STRIP_CROP_FRACTION) -
         return content  # not a decodable raster image - fall back to sending it whole
     width, height = img.size
     cropped = img.crop((0, 0, width, max(1, int(height * fraction))))
+    if cropped.width > TOP_STRIP_MAX_WIDTH:
+        scale = TOP_STRIP_MAX_WIDTH / cropped.width
+        cropped = cropped.resize((TOP_STRIP_MAX_WIDTH, max(1, int(cropped.height * scale))), Image.LANCZOS)
     buf = io.BytesIO()
     cropped.convert("RGB").save(buf, format="JPEG", quality=85)
     return buf.getvalue()
