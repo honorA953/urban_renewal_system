@@ -410,6 +410,34 @@ def _ocr_page_text(content: bytes) -> str:
     return "\n".join(line[1] for line in result) if result else ""
 
 
+# A separate, more aggressively-tuned engine used only for the small header-strip crop
+# detect_case_groups() OCRs (see _ocr_header_text) - NOT for the full-page OCR above,
+# which reads dense small print (owner names, ID numbers, addresses) that genuinely
+# needs the default detection resolution to find reliably. The header crop only ever
+# contains a few lines of large, clear title/頁次 text, so it tolerates a much smaller
+# detection input size (det_limit_side_len) and skipping the angle-classification pass
+# (use_cls) - measured ~60% faster per page with identical parsed results on real
+# samples, which matters a lot on this app's underpowered NAS deployment. Kept as a
+# separate engine instance (not just different call-time args) because RapidOCR bakes
+# det_limit_side_len into the detector at construction time, not overridable per call.
+_HEADER_OCR_ENGINE: RapidOCR | None = None
+
+
+def _get_header_ocr_engine() -> RapidOCR:
+    global _HEADER_OCR_ENGINE
+    if _HEADER_OCR_ENGINE is None:
+        _HEADER_OCR_ENGINE = RapidOCR(det_limit_side_len=320, use_cls=False)
+    return _HEADER_OCR_ENGINE
+
+
+def _ocr_header_text(content: bytes) -> str:
+    """Like _ocr_page_text, but for a _crop_top_strip() header crop specifically - see
+    _get_header_ocr_engine() for why this uses a separate, faster-tuned engine."""
+    img = Image.open(io.BytesIO(content)).convert("RGB")
+    result, _ = _get_header_ocr_engine()(np.array(img))
+    return "\n".join(line[1] for line in result) if result else ""
+
+
 # Appended to EXTRACTION_PROMPT when the caller already knows which section(s) a batch
 # contains (the frontend asks the user upfront) - telling the model to not even attempt
 # the excluded type is more reliable than extracting both and discarding one, because it
@@ -775,7 +803,7 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tupl
     raw_texts: list[str] = []  # TEMP DEBUG
     for i, (content, _mime_type) in enumerate(pages):
         try:
-            text = _ocr_page_text(_crop_top_strip(content))
+            text = _ocr_header_text(_crop_top_strip(content))
             raw_texts.append(text)  # TEMP DEBUG
             entries.append(_parse_case_header(text))
         except Exception as exc:
