@@ -67,17 +67,28 @@ def extract_title_deed_job(
     project_id: int,
     files: list[UploadFile] = File(...),
     record_type: str = Form("both"),
+    # Parallel to `files`, same order/length - "" for a freshly-uploaded page, or an
+    # existing Document's id (as a string) when that page was instead picked via the
+    # wizard's "從本案件文件選擇" existing-document picker. Without this, re-running the
+    # wizard against an already-archived document re-saved it as a brand new Document
+    # every time (same bytes, new row, new file on disk) - the "從本案件文件選擇" picker
+    # exists precisely so the user doesn't have to re-download/re-upload a file that's
+    # already on the project, but the traceability archiving here didn't know that and
+    # archived it again anyway, leaving a duplicate in 文件.
+    source_document_ids: list[str] | None = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_staff_or_admin),
 ):
     """Runs structured extraction on 1+ scanned pages of a title deed (images or PDFs,
-    in the given order), synchronously via OpenAI. Every uploaded page is also saved as
-    a project document for traceability. record_type ("land"/"building"/"both") tells the
-    model which section(s) this batch actually contains, so e.g. a land-only upload
-    doesn't get a spurious buildings entry conjured out of land-page content (or vice
-    versa) - the frontend lets the user declare this upfront since they always know
-    which kind of deed they're uploading. The result is a best-effort suggestion for the
-    frontend's step-by-step review wizard."""
+    in the given order), synchronously via OpenAI. Every freshly-uploaded page is also
+    saved as a project document for traceability (a page that was instead picked from an
+    already-archived document is linked to that existing document, not re-saved - see
+    source_document_ids above). record_type ("land"/"building"/"both") tells the model
+    which section(s) this batch actually contains, so e.g. a land-only upload doesn't get
+    a spurious buildings entry conjured out of land-page content (or vice versa) - the
+    frontend lets the user declare this upfront since they always know which kind of deed
+    they're uploading. The result is a best-effort suggestion for the frontend's
+    step-by-step review wizard."""
     if record_type not in ("land", "building", "both"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid record_type")
     project = get_project_or_404(db, project_id)
@@ -88,7 +99,23 @@ def extract_title_deed_job(
     db.flush()
 
     documents: list[Document] = []
-    for upload in files:
+    newly_created_document_ids: set[int] = set()
+    for i, upload in enumerate(files):
+        source_id_str = source_document_ids[i] if source_document_ids and i < len(source_document_ids) else ""
+        existing_document = None
+        if source_id_str:
+            try:
+                existing_document = db.get(Document, int(source_id_str))
+            except ValueError:
+                existing_document = None
+            if existing_document is not None and existing_document.project_id != project_id:
+                existing_document = None  # not this project's document - ignore rather than trust a client-supplied id blindly
+        if existing_document is not None:
+            upload.file.close()
+            documents.append(existing_document)
+            db.add(OcrJobDocument(ocr_job_id=job.id, document_id=existing_document.id, page_order=len(documents) - 1))
+            continue
+
         content = upload.file.read()
         disk_path, stored_name = build_upload_path(project.project_code, upload.filename or "upload")
         with open(disk_path, "wb") as out:
@@ -106,6 +133,7 @@ def extract_title_deed_job(
         db.add(document)
         db.flush()
         documents.append(document)
+        newly_created_document_ids.add(document.id)
         db.add(OcrJobDocument(ocr_job_id=job.id, document_id=document.id, page_order=len(documents) - 1))
 
     try:
@@ -136,6 +164,8 @@ def extract_title_deed_job(
     if labels:
         archive_label = "、".join(labels)
         for i, doc in enumerate(documents):
+            if doc.id not in newly_created_document_ids:
+                continue  # picked from an existing document - leave its name/description as the user already has it
             ext = os.path.splitext(doc.file_name or "")[1] or ".png"
             doc.description = f"謄本掃描匯入 - {archive_label}"
             doc.file_name = f"{archive_label}_第{i + 1}頁{ext}" if len(documents) > 1 else f"{archive_label}{ext}"
