@@ -1831,7 +1831,8 @@ async function renderLandownersTab(el) {
       ${
         isEditor()
           ? `<div style="display:flex;gap:8px">
-              <button class="btn-secondary btn-sm" id="scan-title-deed-btn">掃描謄本匯入</button>
+              <button class="btn-secondary btn-sm" id="scan-title-deed-btn">土地登記匯入</button>
+              <button class="btn-secondary btn-sm" id="scan-building-title-deed-btn">建物登記匯入</button>
               <button class="btn-primary btn-sm" id="add-landowner-btn">+ 新增地主</button>
             </div>`
           : ""
@@ -1960,6 +1961,8 @@ async function renderLandownersTab(el) {
   if (addBtn) addBtn.addEventListener("click", openAddLandownerModal);
   const scanBtn = document.getElementById("scan-title-deed-btn");
   if (scanBtn) scanBtn.addEventListener("click", openTitleDeedWizard);
+  const scanBuildingBtn = document.getElementById("scan-building-title-deed-btn");
+  if (scanBuildingBtn) scanBuildingBtn.addEventListener("click", openBuildingTitleDeedWizard);
 
   el.querySelectorAll("[data-add-land]").forEach((btn) => {
     btn.addEventListener("click", () => openAddLandRecordModal(Number(btn.dataset.addLand)));
@@ -2397,11 +2400,21 @@ const PING_PER_SQM = 0.3025;
 let titleDeedWizard = null;
 
 function openTitleDeedWizard() {
-  // The 地主清冊 tab's entry point is always used to import 土地謄本 first (the
-  // building-import follow-up prompt after that handles buildings separately) - fixing
+  // The 地主清冊 tab's 「土地登記匯入」button is always used to import 土地謄本 - fixing
   // this to "land" instead of showing the type dropdown keeps the common path simple
-  // and avoids someone accidentally leaving it on "both"/"building" here.
+  // and avoids someone accidentally leaving it on "both"/"building" here. Building
+  // deeds have their own separate entry point - see openBuildingTitleDeedWizard().
   titleDeedWizard = { files: [], pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "land", lockRecordType: true };
+  renderWizardStep0();
+}
+
+function openBuildingTitleDeedWizard() {
+  // Same idea as openTitleDeedWizard() but for the 「建物登記匯入」button - locked to
+  // "building" so this can be run directly from the 地主清冊 tab, not just via the
+  // land-import follow-up prompt (see offerBuildingImportFollowUp()), for a case where
+  // the land data was already handled some other way and only the building deed needs
+  // scanning now.
+  titleDeedWizard = { files: [], pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "building", lockRecordType: true };
   renderWizardStep0();
 }
 
