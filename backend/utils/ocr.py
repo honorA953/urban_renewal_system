@@ -232,14 +232,25 @@ def _expand_pdf_pages(content: bytes) -> list[tuple[bytes, str | None]]:
     request and hit the same quality breakdown chunking is meant to avoid."""
     try:
         doc = fitz.open(stream=content, filetype="pdf")
-        # JPEG instead of PNG: these are scanned pages with a dense repeating security
-        # watermark pattern, which PNG (lossless) compresses very poorly - each page was
-        # coming out ~5-7MB, making both the split-pages preview and every OCR upload
-        # painfully slow, especially over a public tunnel. High-quality JPEG is a
-        # fraction of the size with no meaningful loss of text legibility.
-        pages = [
-            (page.get_pixmap(dpi=PDF_RENDER_DPI).tobytes("jpg", jpg_quality=85), "image/jpeg") for page in doc
-        ]
+        page_count = doc.page_count
+        # Rendering each page (200 DPI rasterization + JPEG encode) is the actual
+        # bottleneck for a large multi-page batch PDF - often more than the header OCR
+        # pass that follows it. fitz's C-level rendering releases the GIL, so a small
+        # thread pool (same pattern as the header-OCR pools below) lets a multi-page PDF
+        # use more than one CPU core here too, instead of rasterizing pages one at a time.
+        def _render_one(i: int) -> tuple[bytes, str | None]:
+            # JPEG instead of PNG: these are scanned pages with a dense repeating security
+            # watermark pattern, which PNG (lossless) compresses very poorly - each page was
+            # coming out ~5-7MB, making both the split-pages preview and every OCR upload
+            # painfully slow, especially over a public tunnel. High-quality JPEG is a
+            # fraction of the size with no meaningful loss of text legibility.
+            return doc[i].get_pixmap(dpi=PDF_RENDER_DPI).tobytes("jpg", jpg_quality=85), "image/jpeg"
+
+        if page_count:
+            with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, page_count)) as pool:
+                pages = list(pool.map(_render_one, range(page_count)))
+        else:
+            pages = []
     except Exception as exc:  # fitz raises its own exception types on malformed PDFs
         raise OcrError(f"無法讀取 PDF 檔案:{exc}") from exc
     if not pages:
@@ -893,12 +904,27 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tupl
 BUILDING_BODY_CROP_FRACTION = 0.35
 
 
+# Real samples show the field printed as "建物坐落地址:祥和段三小段0242-0000" - a label
+# *prefix* (地址, not 地號) with the location+number run directly after it and no
+# trailing 地號/建號 suffix at all, unlike the 地號-suffixed 「共同保地號」cross-reference
+# style _CASE_TITLE_PATTERN was built for. So this can't reuse that suffix-matching
+# approach and needs its own label-anchored pattern instead. 坐/座 and 號/号/址 are all
+# accepted since which glyph a given deed template (or OCR) uses varies.
+_BUILDING_PARCEL_LABEL_PATTERN = re.compile(
+    r"建物[坐座]落地[號号址]\s*[:：﹕]?\s*[^0-9\n]{0,20}?(?P<number>\d{3,6}-\d{3,6})"
+)
+
+
 def _find_building_parcel_number(text: str) -> str:
-    """Scans locally-OCR'd text (see BUILDING_BODY_CROP_FRACTION) for a location+number
-    pattern that ends in 地[號号] rather than 建[號号] - the page's own title always ends in
-    建號 (this is a building deed), so the first 地號-suffixed match found is the
-    建物坐落地號 field, not the title. Returns "" if not found."""
+    """Scans locally-OCR'd text (see BUILDING_BODY_CROP_FRACTION) for the 建物坐落地址/
+    建物坐落地號 field's parcel number. Tries the label-anchored pattern first (see
+    _BUILDING_PARCEL_LABEL_PATTERN for why - this is the format real deeds actually use),
+    then falls back to the older 地[號号]-suffixed style in case some deed templates print
+    it that way instead. Returns "" if neither matches."""
     flattened = text.replace("\n", "")
+    label_match = _BUILDING_PARCEL_LABEL_PATTERN.search(flattened)
+    if label_match:
+        return label_match.group("number")
     for match in _CASE_TITLE_PATTERN.finditer(flattened):
         prefix = flattened[max(0, match.start() - 6) : match.start()]
         if "共同" in prefix:
@@ -917,9 +943,6 @@ def detect_building_parcel_numbers(pages: list[tuple[bytes, str | None]], first_
         try:
             text = _ocr_header_text(_crop_top_strip(pages[i][0], fraction=BUILDING_BODY_CROP_FRACTION))
             parcel_number = _find_building_parcel_number(text)
-            # TEMP DEBUG - remove once the missing-建物坐落地號 detection issue is diagnosed.
-            print(f"[detect_building_parcel_numbers] page {i + 1}: parcel_number={parcel_number!r}", flush=True)
-            print(f"    raw_ocr={text!r}", flush=True)
             return i, parcel_number
         except Exception as exc:
             print(f"[detect_building_parcel_numbers] page {i + 1} OCR/parse failed: {exc}", flush=True)
