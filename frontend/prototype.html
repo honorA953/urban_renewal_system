@@ -3633,27 +3633,20 @@ async function renderSopSummary() {
   let actionPanel = "";
   if (!isFinished && currentStage) {
     const isDualGate = DUAL_GATE_STAGES.includes(sop.current_stage);
+    const stageLabel = currentStage.name.split(":")[1] || currentStage.name;
     actionPanel = `
-      <div class="card">
-        <h3 style="margin-top:0">目前關卡:${escapeHtml(currentStage.name)}</h3>
+      <div class="card" style="padding:24px">
+        <div style="font-size:18px;font-weight:700;margin-bottom:14px">${escapeHtml(stageLabel)}</div>
         ${isDualGate ? `<div id="consent-panel"></div>` : ""}
-        ${
-          isEditor()
-            ? `<div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-                <button class="btn-primary" id="complete-stage-btn">完成本關卡</button>
-                ${isAdmin() ? `<button class="btn-warning" id="force-stage-btn">主管強制完成</button>` : ""}
-              </div>`
-            : ""
-        }
-      </div>`;
-  }
-
-  let forceCloseSection = "";
-  if (isAdmin() && !isFinished) {
-    forceCloseSection = `
-      <div class="card" style="margin-top:16px">
-        <h3 style="margin-top:0">主管操作</h3>
-        <button class="btn-danger btn-sm" id="force-close-project-btn">強制結案</button>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+          ${
+            isEditor()
+              ? `<button class="btn-primary" id="complete-stage-btn">完成本關卡</button>
+                 ${isAdmin() ? `<button class="btn-warning" id="force-stage-btn">主管強制完成</button>` : ""}`
+              : ""
+          }
+          ${isAdmin() ? `<button class="btn-danger" id="force-close-project-btn">強制結案</button>` : ""}
+        </div>
       </div>`;
   }
 
@@ -3661,7 +3654,6 @@ async function renderSopSummary() {
     ${finalBanner}
     <div class="sop-stepper">${stepper}</div>
     ${actionPanel}
-    ${forceCloseSection}
   `;
 
   if (currentStage && DUAL_GATE_STAGES.includes(sop.current_stage) && !isFinished) {
