@@ -374,13 +374,30 @@
   .sub-detail { background: var(--surface-2); padding: 12px 14px; border-radius: var(--radius-sm); margin-top: 6px; font-size: 14px; color: var(--text-muted); line-height: 1.6; }
   .sub-detail table { box-shadow: none; }
 
-  .wizard-confirm-section-title { font-weight: 700; font-size: 14px; margin-top: 18px; margin-bottom: 8px; }
+  .wizard-confirm-section-title {
+    font-weight: 700; font-size: 13px; letter-spacing: .02em; margin-top: 22px; margin-bottom: 10px;
+    color: var(--text-muted); text-transform: uppercase; display: flex; align-items: center; gap: 8px;
+  }
+  .wizard-confirm-section-title::before { content: ""; width: 3px; height: 13px; background: var(--brand); border-radius: 2px; }
   .wizard-confirm-section-title:first-of-type { margin-top: 0; }
-  .wizard-confirm-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; margin-top: 8px; }
-  .wizard-confirm-card-title { font-weight: 600; font-size: 14.5px; margin-bottom: 6px; }
-  .wizard-confirm-card-row { display: flex; gap: 8px; font-size: 13.5px; line-height: 1.7; color: var(--text-muted); }
-  .wizard-confirm-card-row + .wizard-confirm-card-row { margin-top: 2px; }
-  .wizard-confirm-card-label { flex-shrink: 0; color: var(--text-secondary, var(--text-muted)); font-weight: 600; }
+  .wizard-confirm-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius, 10px);
+    padding: 14px 16px; margin-top: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.04); transition: border-color .15s ease;
+  }
+  .wizard-confirm-card:hover { border-color: var(--brand); }
+  .wizard-confirm-card-title { font-weight: 700; font-size: 15px; margin-bottom: 10px; color: var(--text); }
+  .wizard-confirm-card-row { display: flex; gap: 10px; font-size: 13.5px; line-height: 1.9; align-items: flex-start; }
+  .wizard-confirm-card-row + .wizard-confirm-card-row { margin-top: 4px; }
+  .wizard-confirm-card-label {
+    flex-shrink: 0; width: 62px; color: var(--text-muted); font-weight: 600; font-size: 12.5px;
+    padding-top: 3px;
+  }
+  .wizard-confirm-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .wizard-confirm-chip {
+    display: inline-flex; align-items: center; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 100px; padding: 3px 10px; font-size: 12.5px; color: var(--text); white-space: nowrap;
+  }
+  .wizard-confirm-chip.encumbrance { background: var(--warning-light, #fff4e0); border-color: var(--warning, #e0a020); color: var(--warning-dark, #8a5a00); }
 
   .section-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 10px; flex-wrap: wrap; }
   .section-toolbar h3 { margin: 0; font-size: 16.5px; font-weight: 700; }
@@ -3375,18 +3392,22 @@ function renderWizardStepBuildingEditor() {
 
 function renderWizardStepConfirm() {
   const d = titleDeedWizard.data;
+  const ownerChipsHtml = (owners) =>
+    `<div class="wizard-confirm-chip-list">${owners
+      .map((o) => `<span class="wizard-confirm-chip">${escapeHtml(o.owner_name) || "-"}(${o.ownership_numerator}/${o.ownership_denominator})</span>`)
+      .join("")}</div>`;
   const parcelCardHtml = (p) => `
     <div class="wizard-confirm-card">
       <div class="wizard-confirm-card-title">${escapeHtml(parcelSummaryLabel(p))}</div>
       <div class="wizard-confirm-card-row">
         <span class="wizard-confirm-card-label">所有權人</span>
-        <span>${p.owners.map((o) => `${escapeHtml(o.owner_name) || "-"}(${o.ownership_numerator}/${o.ownership_denominator})`).join("、")}</span>
+        ${ownerChipsHtml(p.owners)}
       </div>
       ${
         (p.encumbrances || []).length
           ? `<div class="wizard-confirm-card-row">
               <span class="wizard-confirm-card-label">他項權利</span>
-              <span>${(p.encumbrances || []).map((e) => escapeHtml(e.right_type) || "-").join("、")}</span>
+              <div class="wizard-confirm-chip-list">${(p.encumbrances || []).map((e) => `<span class="wizard-confirm-chip encumbrance">${escapeHtml(e.right_type) || "-"}</span>`).join("")}</div>
             </div>`
           : ""
       }
@@ -3403,7 +3424,7 @@ function renderWizardStepConfirm() {
           <div class="wizard-confirm-card-title">${escapeHtml(buildingSummaryLabel(b))}</div>
           <div class="wizard-confirm-card-row">
             <span class="wizard-confirm-card-label">所有權人</span>
-            <span>${b.owners.map((o) => `${escapeHtml(o.owner_name) || "-"}(${o.ownership_numerator}/${o.ownership_denominator})`).join("、")}</span>
+            ${ownerChipsHtml(b.owners)}
           </div>
         </div>`
         )
@@ -3421,7 +3442,9 @@ function renderWizardStepConfirm() {
       d.encumbrances.length
         ? `<div class="wizard-confirm-section-title">跨地號/建號的他項權利(${d.encumbrances.length})</div>
           <div class="wizard-confirm-card">
-            ${d.encumbrances.map((e) => `${escapeHtml(e.right_type) || "-"} · ${escapeHtml(e.right_holder) || "-"}`).join("、")}
+            <div class="wizard-confirm-chip-list">
+              ${d.encumbrances.map((e) => `<span class="wizard-confirm-chip encumbrance">${escapeHtml(e.right_type) || "-"} · ${escapeHtml(e.right_holder) || "-"}</span>`).join("")}
+            </div>
           </div>`
         : ""
     }
