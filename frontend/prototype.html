@@ -3625,43 +3625,42 @@ async function renderSopSummary() {
     finalBanner = `<div class="final-banner warning">案件已由主管強制結案${sop.final.reason ? ":" + escapeHtml(sop.final.reason) : ""}</div>`;
   }
 
+  const isFinished = sop.final.status !== "pending";
+
   const stepper = stageKeys
     .map((key) => {
       const stage = sop.stages[key];
       const num = Number(key);
-      const cls = stage.status === "completed" ? "completed" : stage.status === "force_closed" ? "force_closed" : num === sop.current_stage ? "current" : "";
-      return `<div class="sop-node ${cls}"><div class="line"></div><div class="circle">${key}</div><div class="label">${formatStageLabelHtml(stage.name.split(":")[1] || stage.name)}</div></div>`;
+      const isCurrent = num === sop.current_stage && !isFinished;
+      const cls = stage.status === "completed" ? "completed" : stage.status === "force_closed" ? "force_closed" : isCurrent ? "current" : "";
+      // The current stage's own 完成本關卡/主管強制完成 buttons live right under that
+      // node's label instead of in a separate card below - keeps them visually
+      // anchored to exactly which stage they act on rather than floating detached
+      // underneath the whole bar.
+      const currentStageActions =
+        isCurrent && isEditor()
+          ? `<div style="display:flex;flex-direction:column;gap:6px;margin-top:10px">
+              <button class="btn-primary btn-sm" id="complete-stage-btn">完成本關卡</button>
+              ${isAdmin() ? `<button class="btn-warning btn-sm" id="force-stage-btn">主管強制完成</button>` : ""}
+            </div>`
+          : "";
+      return `<div class="sop-node ${cls}"><div class="line"></div><div class="circle">${key}</div><div class="label">${formatStageLabelHtml(stage.name.split(":")[1] || stage.name)}</div>${currentStageActions}</div>`;
     })
     .join("");
 
-  const currentStage = sop.stages[String(sop.current_stage)];
-  const isFinished = sop.final.status !== "pending";
-
-  let actionPanel = "";
-  if (!isFinished && currentStage) {
-    const isDualGate = DUAL_GATE_STAGES.includes(sop.current_stage);
-    actionPanel = `
-      <div class="card" style="padding:24px">
-        ${isDualGate ? `<div id="consent-panel"></div>` : ""}
-        <div style="${isDualGate ? "margin-top:14px;" : ""}display:flex;gap:10px;flex-wrap:wrap">
-          ${
-            isEditor()
-              ? `<button class="btn-primary" id="complete-stage-btn">完成本關卡</button>
-                 ${isAdmin() ? `<button class="btn-warning" id="force-stage-btn">主管強制完成</button>` : ""}`
-              : ""
-          }
-          ${isAdmin() ? `<button class="btn-danger" id="force-close-project-btn">強制結案</button>` : ""}
-        </div>
-      </div>`;
-  }
+  const isDualGate = !isFinished && DUAL_GATE_STAGES.includes(sop.current_stage);
+  const forceCloseBtnHtml = isAdmin() && !isFinished ? `<button class="btn-danger btn-sm" id="force-close-project-btn" style="flex-shrink:0">強制結案</button>` : "";
 
   el.innerHTML = `
     ${finalBanner}
-    <div class="sop-stepper">${stepper}</div>
-    ${actionPanel}
+    <div style="display:flex;align-items:flex-start;gap:16px">
+      <div class="sop-stepper" style="flex:1">${stepper}</div>
+      ${forceCloseBtnHtml}
+    </div>
+    ${isDualGate ? `<div id="consent-panel" style="margin-top:14px"></div>` : ""}
   `;
 
-  if (currentStage && DUAL_GATE_STAGES.includes(sop.current_stage) && !isFinished) {
+  if (isDualGate) {
     await renderConsentPanel(document.getElementById("consent-panel"), sop.current_stage);
   }
 
