@@ -1,4 +1,5 @@
 import base64
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from schemas.ocr import BuildingCaseDetectResult, BuildingGroupMatch, CaseDetect
 from utils.ocr import (
     OcrError,
     _flatten_to_pages,
+    _HEADER_OCR_WORKERS,
     detect_building_parcel_numbers,
     detect_case_groups,
     downscale_for_preview,
@@ -19,6 +21,21 @@ from utils.ocr import (
 )
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
+
+
+def _downscale_previews_parallel(contents: list[bytes]) -> list[str]:
+    """Base64-encoded downscale_for_preview() output for each page, in order. Each
+    page's downscale (PIL resize + JPEG re-encode) was previously done in a plain
+    sequential list comprehension - fine for a handful of pages, but real batches (e.g.
+    a 27-page land-title split) measured ~6.6s spent here alone, entirely after OCR/
+    grouping had already finished. Same thread-pool treatment as the OCR passes above
+    fixes it for the same reason: this is CPU-bound Pillow/JPEG work that releases the
+    GIL, so multiple pages can encode on separate cores at once instead of one at a
+    time."""
+    if not contents:
+        return []
+    with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(contents))) as pool:
+        return list(pool.map(lambda c: base64.b64encode(downscale_for_preview(c)).decode("ascii"), contents))
 
 
 @router.post("/detect-cases", response_model=CaseDetectResult)
@@ -41,10 +58,11 @@ def detect_cases_for_batch_import(
     # ran its own OCR against the full-resolution pages, so shrinking the preview here
     # doesn't affect grouping accuracy. Always JPEG now regardless of the original
     # format, since downscale_for_preview() re-encodes to JPEG.
+    preview_b64s = _downscale_previews_parallel([content for content, _mime_type in pages])
     previews = [
         CasePagePreview(
             page_number=i + 1,
-            image_base64=base64.b64encode(downscale_for_preview(content)).decode("ascii"),
+            image_base64=preview_b64s[i],
             mime_type="image/jpeg",
             suggested_case_group=groups[i][0],
             case_label=groups[i][1],
@@ -84,6 +102,7 @@ def detect_building_cases_for_batch_import(
 
     first_page_index_by_group = {gn: next(i for i, g in enumerate(groups) if g[0] == gn) for gn in group_numbers}
     parcel_numbers_by_index = detect_building_parcel_numbers(pages, list(first_page_index_by_group.values()))
+    preview_b64s = _downscale_previews_parallel([content for content, _mime_type in pages])
 
     warnings = [group_warning] if group_warning else []
     result_groups: list[BuildingGroupMatch] = []
@@ -97,7 +116,7 @@ def detect_building_cases_for_batch_import(
         previews = [
             CasePagePreview(
                 page_number=i + 1,
-                image_base64=base64.b64encode(downscale_for_preview(pages[i][0])).decode("ascii"),
+                image_base64=preview_b64s[i],
                 mime_type="image/jpeg",
                 suggested_case_group=group_number,
                 case_label=groups[i][1],
