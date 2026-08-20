@@ -289,7 +289,7 @@ def merge_pages_to_pdf(pages: list[tuple[bytes, str | None]]) -> bytes:
     return doc.tobytes()
 
 
-def downscale_for_preview(content: bytes, max_dimension: int = 1000, quality: int = 65) -> bytes:
+def downscale_for_preview(content: bytes, max_dimension: int = 1000, quality: int = 65, decoded: Image.Image | None = None) -> bytes:
     """Shrinks a page image for use as a lightweight preview - e.g. the batch-import
     case-split review grid only ever displays these at ~110px tall, so there's no need
     to ship the full ~200-DPI page (several MB each, since these are dense scans with a
@@ -298,11 +298,10 @@ def downscale_for_preview(content: bytes, max_dimension: int = 1000, quality: in
     painfully slow to actually download over a remote/mobile connection (e.g. through a
     Tailscale Funnel) even though the server had already finished processing and logged
     the request as complete. Falls back to the original bytes if the image can't be
-    decoded, rather than dropping the page."""
-    try:
-        img = Image.open(io.BytesIO(content))
-        img.load()
-    except Exception:
+    decoded, rather than dropping the page. Pass `decoded` (see _decode_image) to reuse
+    an already-decoded page instead of re-decoding the same JPEG from scratch."""
+    img = decoded if decoded is not None else _decode_image(content)
+    if img is None:
         return content
     img = img.convert("RGB")
     if max(img.width, img.height) > max_dimension:
@@ -788,11 +787,26 @@ TOP_STRIP_CROP_FRACTION = 0.15
 TOP_STRIP_MAX_WIDTH = 640
 
 
-def _crop_top_strip(content: bytes, fraction: float = TOP_STRIP_CROP_FRACTION) -> bytes:
+def _decode_image(content: bytes) -> Image.Image | None:
+    """Decodes page bytes into a PIL Image once. A ~200-DPI scanned page is a few
+    megapixels, and decoding that JPEG is itself real CPU work on weak hardware - not
+    the crop/resize afterward, which operates on already-decoded pixels and is cheap by
+    comparison. Several steps in a batch-import request (header-crop OCR, the building
+    parcel-number crop, the preview thumbnail) each used to independently re-decode the
+    same page bytes from scratch; callers here can decode once per page and pass the
+    result to all of them instead - see detect_case_groups()'s decoded_images return
+    value. Returns None if the bytes aren't a decodable raster image."""
     try:
         img = Image.open(io.BytesIO(content))
         img.load()
+        return img
     except Exception:
+        return None
+
+
+def _crop_top_strip(content: bytes, fraction: float = TOP_STRIP_CROP_FRACTION, decoded: Image.Image | None = None) -> bytes:
+    img = decoded if decoded is not None else _decode_image(content)
+    if img is None:
         return content  # not a decodable raster image - fall back to sending it whole
     width, height = img.size
     cropped = img.crop((0, 0, width, max(1, int(height * fraction))))
@@ -867,33 +881,43 @@ def _parse_case_header(text: str) -> tuple[str, str, int | None]:
     return location, sample_number, _find_page_sequence(text)
 
 
-def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tuple[int, str, str]], str | None]:
+def detect_case_groups(
+    pages: list[tuple[bytes, str | None]],
+) -> tuple[list[tuple[int, str, str]], str | None, list[Image.Image | None]]:
     """Returns ([(1-based case group number, detected location label, sample 地號/建號),
-    ...], optional warning). A "案件" here is one 地號/建號: a page whose 頁次 reads
-    000001 starts a new group; any other 頁次 value continues whatever group is current.
-    location/sample_number play no part in the boundary - they're only carried along to
-    suggest a readable case name/code. Detection runs entirely locally (OCR + regex, see
-    _parse_case_header) - no OpenAI call, no per-page cost, no shared rate limit. If a
-    page's header can't be parsed (OCR failure or unexpected format), that page is
-    forced to start its own new group instead of being silently merged into whatever
-    group was current, and a warning names which pages need manual review. Only a
-    suggestion either way - the batch-import review step lets the user move pages
-    between groups and rename each group before any project gets created."""
-    if not pages:
-        return [], None
+    ...], optional warning, decoded_images). A "案件" here is one 地號/建號: a page whose
+    頁次 reads 000001 starts a new group; any other 頁次 value continues whatever group is
+    current. location/sample_number play no part in the boundary - they're only carried
+    along to suggest a readable case name/code. Detection runs entirely locally (OCR +
+    regex, see _parse_case_header) - no OpenAI call, no per-page cost, no shared rate
+    limit. If a page's header can't be parsed (OCR failure or unexpected format), that
+    page is forced to start its own new group instead of being silently merged into
+    whatever group was current, and a warning names which pages need manual review. Only
+    a suggestion either way - the batch-import review step lets the user move pages
+    between groups and rename each group before any project gets created.
 
-    def _ocr_one_page(i: int, content: bytes) -> tuple[str, tuple[str, str, int | None]]:
+    decoded_images is each page's already-decoded PIL Image (None for any page that
+    failed to decode), aligned index-for-index with `pages` - callers doing further work
+    on the same pages right after this (building the preview thumbnails, the building
+    batch's parcel-number crop) should pass these along instead of re-decoding the same
+    JPEG bytes from scratch; see _decode_image()."""
+    if not pages:
+        return [], None, []
+
+    def _ocr_one_page(i: int, content: bytes) -> tuple[str, tuple[str, str, int | None], Image.Image | None]:
         try:
-            text = _ocr_header_text(_crop_top_strip(content))
-            return text, _parse_case_header(text)
+            decoded = _decode_image(content)
+            text = _ocr_header_text(_crop_top_strip(content, decoded=decoded))
+            return text, _parse_case_header(text), decoded
         except Exception as exc:
             print(f"[detect_case_groups] page {i + 1} OCR/parse failed: {exc}", flush=True)
-            return "", ("(偵測失敗)", "", None)
+            return "", ("(偵測失敗)", "", None), None
 
     with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(pages))) as pool:
         page_results = list(pool.map(lambda args: _ocr_one_page(*args), enumerate(content for content, _mime_type in pages)))
 
-    entries: list[tuple[str, str, int | None]] = [entry for _text, entry in page_results]
+    entries: list[tuple[str, str, int | None]] = [entry for _text, entry, _decoded in page_results]
+    decoded_images: list[Image.Image | None] = [decoded for _text, _entry, decoded in page_results]
     failed_pages: list[int] = [i + 1 for i, entry in enumerate(entries) if entry[0] == "(偵測失敗)"]
 
     grouped: list[tuple[int, str, str]] = []
@@ -938,7 +962,7 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tupl
         if failed_pages
         else None
     )
-    return grouped, warning
+    return grouped, warning, decoded_images
 
 
 # Building deeds print "建物坐落地號:XX段XX小段0223-0000" as one of the first lines of the
@@ -983,14 +1007,21 @@ def _find_building_parcel_number(text: str) -> str:
     return ""
 
 
-def detect_building_parcel_numbers(pages: list[tuple[bytes, str | None]], first_page_indices: list[int]) -> dict[int, str]:
+def detect_building_parcel_numbers(
+    pages: list[tuple[bytes, str | None]],
+    first_page_indices: list[int],
+    decoded_images: list[Image.Image | None] | None = None,
+) -> dict[int, str]:
     """For each given page index (expected to be the first page of a detected 建號 group),
     locally OCRs a taller top crop and returns {index: 建物坐落地號} for whichever ones a
-    地號-suffixed match was found on. No OpenAI call."""
+    地號-suffixed match was found on. No OpenAI call. Pass decoded_images (see
+    detect_case_groups()'s return value) to reuse each page's already-decoded image
+    instead of re-decoding the same JPEG bytes a second time."""
     def _ocr_one_group(i: int) -> tuple[int, str]:
         page_start = time.monotonic()
         try:
-            text = _ocr_header_text(_crop_top_strip(pages[i][0], fraction=BUILDING_BODY_CROP_FRACTION))
+            decoded = decoded_images[i] if decoded_images else None
+            text = _ocr_header_text(_crop_top_strip(pages[i][0], fraction=BUILDING_BODY_CROP_FRACTION, decoded=decoded))
             parcel_number = _find_building_parcel_number(text)
             # Kept as a permanent (not TEMP DEBUG) log, not just for slow-page failures -
             # a real incident on the NAS showed this step going quiet for 5+ minutes with

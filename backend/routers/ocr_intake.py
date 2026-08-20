@@ -24,7 +24,7 @@ from utils.ocr import (
 router = APIRouter(prefix="/ocr", tags=["ocr"])
 
 
-def _downscale_previews_parallel(contents: list[bytes]) -> list[str]:
+def _downscale_previews_parallel(contents: list[bytes], decoded_images: list | None = None) -> list[str]:
     """Base64-encoded downscale_for_preview() output for each page, in order. Each
     page's downscale (PIL resize + JPEG re-encode) was previously done in a plain
     sequential list comprehension - fine for a handful of pages, but real batches (e.g.
@@ -32,10 +32,20 @@ def _downscale_previews_parallel(contents: list[bytes]) -> list[str]:
     grouping had already finished. Same thread-pool treatment as the OCR passes above
     fixes it for the same reason: this is CPU-bound Pillow/JPEG work that releases the
     GIL, so multiple pages can encode on separate cores at once instead of one at a
-    time."""
+    time. Pass decoded_images (detect_case_groups()'s return value) to reuse each page's
+    already-decoded image instead of paying to decode the same JPEG bytes again - on a
+    weak NAS CPU that redundant full-page decode turned out to be a bigger cost than the
+    resize/encode this function actually does."""
     if not contents:
         return []
     with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(contents))) as pool:
+        if decoded_images:
+            return list(
+                pool.map(
+                    lambda args: base64.b64encode(downscale_for_preview(args[0], decoded=args[1])).decode("ascii"),
+                    zip(contents, decoded_images),
+                )
+            )
         return list(pool.map(lambda c: base64.b64encode(downscale_for_preview(c)).decode("ascii"), contents))
 
 
@@ -58,14 +68,14 @@ def detect_cases_for_batch_import(
     print(f"[detect-cases] {len(pages)} page(s) rendered/loaded in {time.monotonic() - t0:.2f}s", flush=True)
 
     t1 = time.monotonic()
-    groups, warning = detect_case_groups(pages)
+    groups, warning, decoded_images = detect_case_groups(pages)
     print(f"[detect-cases] case-grouping done in {time.monotonic() - t1:.2f}s", flush=True)
     # Downscaled for the review grid's benefit only - detect_case_groups() above already
     # ran its own OCR against the full-resolution pages, so shrinking the preview here
     # doesn't affect grouping accuracy. Always JPEG now regardless of the original
     # format, since downscale_for_preview() re-encodes to JPEG.
     t2 = time.monotonic()
-    preview_b64s = _downscale_previews_parallel([content for content, _mime_type in pages])
+    preview_b64s = _downscale_previews_parallel([content for content, _mime_type in pages], decoded_images)
     print(f"[detect-cases] preview thumbnails done in {time.monotonic() - t2:.2f}s (total {time.monotonic() - t0:.2f}s)", flush=True)
     previews = [
         CasePagePreview(
@@ -110,7 +120,7 @@ def detect_building_cases_for_batch_import(
     print(f"[detect-building-cases] {len(pages)} page(s) rendered/loaded in {time.monotonic() - t0:.2f}s", flush=True)
 
     t1 = time.monotonic()
-    groups, group_warning = detect_case_groups(pages)
+    groups, group_warning, decoded_images = detect_case_groups(pages)
     print(f"[detect-building-cases] case-grouping done in {time.monotonic() - t1:.2f}s", flush=True)
     group_numbers = sorted({g[0] for g in groups})
 
@@ -119,10 +129,10 @@ def detect_building_cases_for_batch_import(
     print(f"[detect-building-cases] loaded {len(projects_by_code)} existing project code(s) in {time.monotonic() - t2:.2f}s", flush=True)
 
     first_page_index_by_group = {gn: next(i for i, g in enumerate(groups) if g[0] == gn) for gn in group_numbers}
-    parcel_numbers_by_index = detect_building_parcel_numbers(pages, list(first_page_index_by_group.values()))
+    parcel_numbers_by_index = detect_building_parcel_numbers(pages, list(first_page_index_by_group.values()), decoded_images)
 
     t3 = time.monotonic()
-    preview_b64s = _downscale_previews_parallel([content for content, _mime_type in pages])
+    preview_b64s = _downscale_previews_parallel([content for content, _mime_type in pages], decoded_images)
     print(f"[detect-building-cases] preview thumbnails done in {time.monotonic() - t3:.2f}s (total so far {time.monotonic() - t0:.2f}s)", flush=True)
 
     warnings = [group_warning] if group_warning else []
