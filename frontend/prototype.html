@@ -585,7 +585,10 @@
           <h2 id="pd-name"></h2>
           <div class="sub" id="pd-sub"></div>
         </div>
-        <div id="pd-status-badge"></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="pd-status-badge"></div>
+          <div id="pd-header-actions"></div>
+        </div>
       </div>
       <div id="pd-sop-summary" style="margin-bottom:16px"></div>
       <div class="tab-bar">
@@ -3649,14 +3652,16 @@ async function renderSopSummary() {
     .join("");
 
   const isDualGate = !isFinished && DUAL_GATE_STAGES.includes(sop.current_stage);
-  const forceCloseBtnHtml = isAdmin() && !isFinished ? `<button class="btn-danger btn-sm" id="force-close-project-btn" style="flex-shrink:0">強制結案</button>` : "";
+
+  // Lives up in the case title header (next to the status badge), not down here with
+  // the stepper - it acts on the whole case, not on any one stage, so it reads better
+  // sitting alongside the case's own status than floating off the end of the bar.
+  document.getElementById("pd-header-actions").innerHTML =
+    isAdmin() && !isFinished ? `<button class="btn-danger btn-sm" id="force-close-project-btn">強制結案</button>` : "";
 
   el.innerHTML = `
     ${finalBanner}
-    <div style="display:flex;align-items:flex-start;gap:16px">
-      <div class="sop-stepper" style="flex:1">${stepper}</div>
-      ${forceCloseBtnHtml}
-    </div>
+    <div class="sop-stepper">${stepper}</div>
     ${isDualGate ? `<div id="consent-panel" style="margin-top:14px"></div>` : ""}
   `;
 
