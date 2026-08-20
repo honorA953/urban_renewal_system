@@ -852,3 +852,46 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tupl
         else None
     )
     return grouped, warning
+
+
+# Building deeds print "建物坐落地號:XX段XX小段0223-0000" as one of the first lines of the
+# 建物標示部 body, just below the page's own "...建號" title - close enough to the top
+# that a slightly taller local-OCR crop (instead of the narrow title-only strip
+# detect_case_groups uses) reliably catches it. This lets the batch building-import's
+# case-detect step match each group to an existing 地號 project locally (no OpenAI call),
+# the same way detect_case_groups() itself avoids the API - full AI extraction (for
+# owners/address/floors) is deferred to whichever group the user actually confirms and
+# imports, instead of running it for every group up front.
+BUILDING_BODY_CROP_FRACTION = 0.35
+
+
+def _find_building_parcel_number(text: str) -> str:
+    """Scans locally-OCR'd text (see BUILDING_BODY_CROP_FRACTION) for a location+number
+    pattern that ends in 地[號号] rather than 建[號号] - the page's own title always ends in
+    建號 (this is a building deed), so the first 地號-suffixed match found is the
+    建物坐落地號 field, not the title. Returns "" if not found."""
+    flattened = text.replace("\n", "")
+    for match in _CASE_TITLE_PATTERN.finditer(flattened):
+        prefix = flattened[max(0, match.start() - 6) : match.start()]
+        if "共同" in prefix:
+            continue
+        suffix = match.group(0)[-2:]
+        if suffix in ("地號", "地号"):
+            return match.group("number")
+    return ""
+
+
+def detect_building_parcel_numbers(pages: list[tuple[bytes, str | None]], first_page_indices: list[int]) -> dict[int, str]:
+    """For each given page index (expected to be the first page of a detected 建號 group),
+    locally OCRs a taller top crop and returns {index: 建物坐落地號} for whichever ones a
+    地號-suffixed match was found on. No OpenAI call."""
+    result: dict[int, str] = {}
+    for i in first_page_indices:
+        try:
+            text = _ocr_header_text(_crop_top_strip(pages[i][0], fraction=BUILDING_BODY_CROP_FRACTION))
+            parcel_number = _find_building_parcel_number(text)
+            if parcel_number:
+                result[i] = parcel_number
+        except Exception as exc:
+            print(f"[detect_building_parcel_numbers] page {i + 1} OCR/parse failed: {exc}", flush=True)
+    return result

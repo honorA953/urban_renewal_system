@@ -1533,8 +1533,8 @@ function renderBuildingBatchStep0() {
     `
     <div class="helper-text" style="margin-bottom:10px">
       上傳一整份建物謄本(可涵蓋多筆建號)。系統會依每頁「頁次」自動拆成一筆一筆建號,讀出每筆的「建物坐落地號」,
-      拿去比對現有案件的案件代碼——比對到的會自動預選對應案件,比對不到的請在下一步手動選擇。這一步需要實際跑 AI
-      辨識(不是免費的本地判斷),頁數多會比較慢、也會花費 API 額度。
+      拿去比對現有案件的案件代碼——比對到的會自動預選對應案件,比對不到的請在下一步手動選擇。這一步只用本地 OCR
+      判斷,不會呼叫 AI,速度快也不花費 API 額度;所有權人等詳細資料會在下一步確認歸檔時才用 AI 辨識。
     </div>
     <div class="field">
       <label>選擇建物謄本圖片或 PDF</label>
@@ -1588,7 +1588,7 @@ async function runDetectBuildingCases() {
   }
   const btn = document.getElementById("building-batch-detect-btn");
   btn.disabled = true;
-  btn.textContent = "辨識比對中(頁數多可能需要數分鐘)...";
+  btn.textContent = "偵測比對中...";
   try {
     const fd = new FormData();
     buildingBatchWizard.files.forEach((f) => fd.append("files", f));
@@ -1632,7 +1632,7 @@ async function renderBuildingBatchReview() {
                style="width:90px;height:90px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0">
           <div style="flex:1">
             <div style="font-weight:700">建號 ${escapeHtml(b.building_number || "-")}(${g.pages.length} 頁)</div>
-            <div class="helper-text" style="margin-top:2px">建物坐落地號:${escapeHtml(b.parcel_number || "(未讀到)")} · 門牌:${escapeHtml(b.building_address || "-")} · ${(b.owners || []).length} 位所有權人</div>
+            <div class="helper-text" style="margin-top:2px">建物坐落地號:${escapeHtml(b.parcel_number || "(未讀到)")} · 所有權人等詳細資料將於確認歸檔時辨識</div>
             <div class="helper-text" style="margin-top:4px">${matched ? `✅ 已比對到案件:${escapeHtml(g.matched_project_name)}(${escapeHtml(g.matched_project_code)})` : "⚠ 未比對到現有案件,請手動選擇"}</div>
           </div>
         </div>
@@ -1679,9 +1679,23 @@ async function runConfirmBuildingBatchImport() {
   try {
     for (let i = 0; i < groups.length; i++) {
       const g = groups[i];
-      btn.textContent = `匯入中(第 ${i + 1}/${groups.length} 筆)...`;
+      btn.textContent = `辨識中(第 ${i + 1}/${groups.length} 筆)...`;
       const pid = Number(g.selectedProjectId);
-      const b = g.building || {};
+
+      // Full AI extraction was deferred from the detect step (which only ran local OCR)
+      // to here, so it only runs for groups the user actually confirmed importing.
+      let b = g.building || {};
+      try {
+        const fd0 = new FormData();
+        g.pages.forEach((p, j) => fd0.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${j + 1}.jpg`));
+        const extracted = await api("/ocr/extract-building-group", { method: "POST", body: fd0, isForm: true });
+        if (extracted.warning) toast(`第${g.group}組:${extracted.warning}`, "error");
+        if (extracted.building) b = extracted.building;
+      } catch (err) {
+        toast(`建號${b.building_number || g.group}辨識失敗,已略過`, "error");
+        continue;
+      }
+      btn.textContent = `匯入中(第 ${i + 1}/${groups.length} 筆)...`;
 
       // Archive this group's original pages as one merged PDF, same as the 地號 batch
       // import already does - see runConfirmCaseSplit.

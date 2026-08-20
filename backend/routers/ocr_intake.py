@@ -9,7 +9,14 @@ from deps import require_staff_or_admin
 from models.project import Project
 from models.user import User
 from schemas.ocr import BuildingCaseDetectResult, BuildingGroupMatch, CaseDetectResult, CasePagePreview
-from utils.ocr import OcrError, _flatten_to_pages, detect_case_groups, downscale_for_preview, extract_title_deed
+from utils.ocr import (
+    OcrError,
+    _flatten_to_pages,
+    detect_building_parcel_numbers,
+    detect_case_groups,
+    downscale_for_preview,
+    extract_title_deed,
+)
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
 
@@ -56,15 +63,15 @@ def detect_building_cases_for_batch_import(
 ):
     """Splits an uploaded batch of building deeds into per-建號 groups (same 頁次-based
     grouping as detect_cases_for_batch_import, since both title formats fit the same
-    regex), then - unlike that endpoint - actually runs full OCR/AI extraction on each
-    group to read its 建物坐落地號 (the field that says which 地號 the building sits on,
-    a different field than the building's own 建號 in the title). Each group is matched
-    against existing projects by project_code == 建物坐落地號, so an already-created
-    地號 case can be found and filed into automatically; unmatched groups come back with
-    matched_project_id=None for the frontend to offer manual selection. This is
-    noticeably slower/costlier than /detect-cases: reading 建物坐落地號 needs the model
-    to actually parse the page, not just the local OCR+regex header check the case-split
-    step uses."""
+    regex), then reads each group's 建物坐落地號 (the field that says which 地號 the
+    building sits on, a different field than the building's own 建號 in the title) via a
+    second local OCR pass on a taller crop of the group's first page - no OpenAI call, so
+    this step stays as fast as /detect-cases. Each group is matched against existing
+    projects by project_code == 建物坐落地號, so an already-created 地號 case can be
+    found and filed into automatically; unmatched groups come back with
+    matched_project_id=None for the frontend to offer manual selection. Full AI
+    extraction (owners/address/floors) only happens later, per group, at actual import
+    time - see runConfirmBuildingBatchImport in the frontend."""
     file_payload = [(upload.file.read(), upload.content_type) for upload in files]
     try:
         pages = _flatten_to_pages(file_payload)
@@ -75,25 +82,16 @@ def detect_building_cases_for_batch_import(
     group_numbers = sorted({g[0] for g in groups})
     projects_by_code = {p.project_code: p for p in db.scalars(select(Project)).all()}
 
+    first_page_index_by_group = {gn: next(i for i, g in enumerate(groups) if g[0] == gn) for gn in group_numbers}
+    parcel_numbers_by_index = detect_building_parcel_numbers(pages, list(first_page_index_by_group.values()))
+
     warnings = [group_warning] if group_warning else []
     result_groups: list[BuildingGroupMatch] = []
     for group_number in group_numbers:
         indices = [i for i, g in enumerate(groups) if g[0] == group_number]
-        group_pages = [pages[i] for i in indices]
-
-        building_dict: dict | None = None
-        try:
-            data, extract_warning = extract_title_deed(group_pages, record_type="building")
-            if extract_warning:
-                warnings.append(f"第{group_number}組:{extract_warning}")
-            if data["buildings"]:
-                building_dict = data["buildings"][0]
-        except OcrError as exc:
-            warnings.append(f"第{group_number}組辨識失敗:{exc}")
-
-        if building_dict is not None and not building_dict.get("building_number"):
-            building_dict["building_number"] = groups[indices[0]][2]  # fall back to the title's own 建號
-        parcel_number = ((building_dict or {}).get("parcel_number") or "").strip()
+        building_number = groups[indices[0]][2]  # from the title's own 建號, read locally
+        parcel_number = parcel_numbers_by_index.get(first_page_index_by_group[group_number], "")
+        building_dict = {"building_number": building_number, "parcel_number": parcel_number} if building_number or parcel_number else None
 
         matched = projects_by_code.get(parcel_number) if parcel_number else None
         previews = [
@@ -119,3 +117,26 @@ def detect_building_cases_for_batch_import(
         )
 
     return BuildingCaseDetectResult(groups=result_groups, warning="、".join(warnings) if warnings else None)
+
+
+@router.post("/extract-building-group")
+def extract_building_group(
+    files: list[UploadFile] = File(...),
+    current_user: User = Depends(require_staff_or_admin),
+):
+    """Runs full AI extraction on one already-matched building group's pages, called by
+    the batch building-import confirm step right before it creates records for that
+    group - not scoped to a project, and doesn't save any documents itself (the caller
+    separately archives the group's pages as a merged PDF). Kept as its own step, deferred
+    until confirm time, so /detect-building-cases above can stay local-OCR-only (fast, no
+    API cost) instead of eagerly running AI extraction on every group up front."""
+    file_payload = [(upload.file.read(), upload.content_type) for upload in files]
+    try:
+        pages = _flatten_to_pages(file_payload)
+    except OcrError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    try:
+        data, warning = extract_title_deed(pages, record_type="building")
+    except OcrError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return {"building": data["buildings"][0] if data["buildings"] else None, "warning": warning}
