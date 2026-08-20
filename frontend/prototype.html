@@ -3421,7 +3421,7 @@ function renderWizardStepConfirm() {
         (p.encumbrances || []).length
           ? `<div class="wizard-confirm-card-row">
               <span class="wizard-confirm-card-label">他項權利</span>
-              <div class="wizard-confirm-chip-list">${(p.encumbrances || []).map((e) => `<span class="wizard-confirm-chip encumbrance">${escapeHtml(e.right_type) || "-"}</span>`).join("")}</div>
+              <div class="wizard-confirm-chip-list">${(p.encumbrances || []).map((e) => `<span class="wizard-confirm-chip encumbrance">${escapeHtml(e.right_type) || "-"} · ${escapeHtml(e.right_holder) || "-"}</span>`).join("")}</div>
             </div>`
           : ""
       }
@@ -3649,9 +3649,14 @@ function offerBuildingImportFollowUp() {
     </div>`,
     { width: "480px" }
   );
-  document.getElementById("start-building-import-btn").addEventListener("click", () => {
-    titleDeedWizard = { files: [], pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "building" };
-    renderWizardStep0();
+  document.getElementById("start-building-import-btn").addEventListener("click", async () => {
+    // Switch the tab underneath to 建物登記 before opening the wizard, so whichever tab
+    // was showing when the land import finished (usually 土地登記, since that's what
+    // triggered this follow-up) isn't what's left behind once the wizard modal closes.
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === "buildings"));
+    state.activeTab = "buildings";
+    await renderTab("buildings");
+    openBuildingTitleDeedWizard();
   });
 }
 
