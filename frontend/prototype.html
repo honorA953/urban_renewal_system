@@ -587,9 +587,9 @@
         </div>
         <div id="pd-status-badge"></div>
       </div>
+      <div id="pd-sop-summary" style="margin-bottom:16px"></div>
       <div class="tab-bar">
         <button class="tab-btn" data-tab="landowners">地主</button>
-        <button class="tab-btn" data-tab="sop">SOP 進度</button>
         <button class="tab-btn" data-tab="contacts">聯絡紀錄</button>
         <button class="tab-btn" data-tab="documents">文件</button>
         <button class="tab-btn" data-tab="encumbrances">他項權利部</button>
@@ -1781,7 +1781,7 @@ async function openProject(id) {
     btn.classList.toggle("active", btn.dataset.tab === "landowners");
   });
   state.activeTab = "landowners";
-  await renderTab("landowners");
+  await Promise.all([renderTab("landowners"), renderSopSummary()]);
 }
 
 function renderProjectHeader(p) {
@@ -1805,7 +1805,6 @@ async function renderTab(tab) {
   el.innerHTML = `<div class="empty-state">載入中...</div>`;
   const renderers = {
     landowners: renderLandownersTab,
-    sop: renderSopTab,
     contacts: renderContactsTab,
     documents: renderDocumentsTab,
     encumbrances: renderEncumbrancesTab,
@@ -3604,7 +3603,8 @@ function offerBuildingImportFollowUp() {
 
 const DUAL_GATE_STAGES = [4, 8, 9];
 
-async function renderSopTab(el) {
+async function renderSopSummary() {
+  const el = document.getElementById("pd-sop-summary");
   const pid = state.currentProjectId;
   const sop = await api(`/projects/${pid}/sop`);
   state.projectCache[pid].sop = sop;
@@ -3675,7 +3675,7 @@ async function renderSopTab(el) {
         await api(`/projects/${pid}/sop/${sop.current_stage}/complete`, { method: "POST", body: {} });
         toast("關卡已完成", "success");
         await loadDashboard();
-        renderTab("sop");
+        renderSopSummary();
       } catch (err) {}
     });
   }
@@ -3687,7 +3687,7 @@ async function renderSopTab(el) {
       try {
         await api(`/projects/${pid}/sop/${sop.current_stage}/complete`, { method: "POST", body: { force: true, reason } });
         toast("已強制完成關卡", "success");
-        renderTab("sop");
+        renderSopSummary();
       } catch (err) {}
     });
   }
@@ -3700,7 +3700,7 @@ async function renderSopTab(el) {
         await api(`/projects/${pid}/sop/force-close`, { method: "POST", body: { force: true, reason } });
         toast("案件已強制結案", "success");
         await loadDashboard();
-        renderTab("sop");
+        renderSopSummary();
       } catch (err) {}
     });
   }
@@ -3762,7 +3762,7 @@ async function renderConsentPanel(el, stage) {
           body: { landowner_id: Number(btn.dataset.consent), consent_status: btn.dataset.status },
         });
         toast("已登記同意狀態", "success");
-        renderTab("sop");
+        renderSopSummary();
       } catch (err) {}
     });
   });
