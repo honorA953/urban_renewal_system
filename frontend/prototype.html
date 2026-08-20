@@ -1501,7 +1501,6 @@ async function runConfirmCaseSplit() {
   btn.textContent = "建立中...";
 
   const groupNumbers = [...new Set(caseSplitWizard.pages.map((p) => p.group))].sort((a, b) => a - b);
-  const results = [];
 
   try {
     for (const g of groupNumbers) {
@@ -1531,8 +1530,8 @@ async function runConfirmCaseSplit() {
         meta.createdProjectId = project.id;
       }
       // Save this group's source pages as a merged PDF document on the project right
-      // away - otherwise they only exist in this browser tab's memory, and are lost if
-      // the user doesn't immediately click "前往此案件掃描辨識" before navigating away.
+      // away - otherwise they only exist in this browser tab's memory and are lost once
+      // this modal closes.
       try {
         const fd = new FormData();
         groupPages.forEach((p, i) => fd.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${i + 1}.jpg`));
@@ -1540,55 +1539,15 @@ async function runConfirmCaseSplit() {
         fd.append("description", "批次匯入原始掃描檔");
         await api(`/projects/${project.id}/documents/from-images`, { method: "POST", body: fd, isForm: true });
       } catch (err) {}
-
-      results.push({ project, pageCount: groupPages.length, pages: groupPages });
     }
 
     closeModal();
     toast("案件已建立/歸入完成", "success");
     await loadDashboard();
-    renderCaseSplitResults(results);
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "確認建立";
   }
-}
-
-function renderCaseSplitResults(results) {
-  openModal(
-    "批次匯入完成",
-    `
-    <div class="helper-text" style="margin-bottom:10px">
-      接下來請逐一進到每個案件,用「掃描謄本匯入」精靈確認地號/建物/地主資料。每個案件的原始掃描頁面已合併成
-      一份 PDF 存進該案件的「文件」分頁,不用現在馬上處理,之後隨時可以回去下載使用。
-    </div>
-    ${results
-      .map(
-        (r, i) => `
-      <div class="record-row" style="display:flex;align-items:center;gap:8px;padding:10px;margin-bottom:8px">
-        <span style="flex:1">${escapeHtml(r.project.name)}(${escapeHtml(r.project.project_code)})· ${r.pageCount} 頁</span>
-        <button type="button" class="btn-primary btn-sm" data-go-case="${i}">前往此案件掃描辨識</button>
-      </div>`
-      )
-      .join("")}
-    <div class="modal-footer">
-      <button type="button" class="btn-secondary" onclick="closeModal(); goToDashboard();">完成</button>
-    </div>`,
-    { width: "600px" }
-  );
-
-  document.querySelectorAll("[data-go-case]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const r = results[Number(btn.dataset.goCase)];
-      const files = r.pages.map(
-        (p) => new File([base64ToBlob(p.image_base64, p.mime_type)], `page-${p.page_number}.png`, { type: p.mime_type })
-      );
-      closeModal();
-      await openProject(r.project.id);
-      titleDeedWizard = { files, pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "both" };
-      renderWizardStep0();
-    });
-  });
 }
 
 /* ================= Batch import: building deeds, auto-matched to existing 地號 cases ================= */
