@@ -523,7 +523,18 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type
     # numbers, ID numbers, ownership fractions) far more reliably than a vision LLM
     # skimming a downsized page image. The model's job here is purely to organize and
     # sanity-check already-recognized text, not to also read characters off pixels.
-    page_texts = [_ocr_page_text(content) for content, _ in files]
+    #
+    # This full-page OCR pass (dense small print, so it can't use the cheap downsized
+    # header-crop engine detect_case_groups() uses) was still a plain sequential list
+    # comprehension - the batch building-import confirm step calls this once per group
+    # (see extract_building_group), and a multi-page group was paying for each page's
+    # OCR one at a time instead of using the same thread-pool treatment already applied
+    # everywhere else in this file.
+    if files:
+        with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(files))) as pool:
+            page_texts = list(pool.map(lambda args: _ocr_page_text(args[0]), files))
+    else:
+        page_texts = []
     # TEMP DEBUG - remove once the missing-encumbrances extraction issue is diagnosed.
     for i, t in enumerate(page_texts):
         print(f"[_extract_title_deed_chunk] page {i + 1} OCR text:\n{t}\n", flush=True)
