@@ -49,17 +49,24 @@ def detect_cases_for_batch_import(
     reading the 頁次 field printed in each page's header. Not scoped to a project - this
     runs before the user has decided which project(s) the batch even belongs to, as the
     first step of batch-importing a mixed pile of scanned title deeds."""
+    t0 = time.monotonic()
     file_payload = [(upload.file.read(), upload.content_type) for upload in files]
     try:
         pages = _flatten_to_pages(file_payload)
     except OcrError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    print(f"[detect-cases] {len(pages)} page(s) rendered/loaded in {time.monotonic() - t0:.2f}s", flush=True)
+
+    t1 = time.monotonic()
     groups, warning = detect_case_groups(pages)
+    print(f"[detect-cases] case-grouping done in {time.monotonic() - t1:.2f}s", flush=True)
     # Downscaled for the review grid's benefit only - detect_case_groups() above already
     # ran its own OCR against the full-resolution pages, so shrinking the preview here
     # doesn't affect grouping accuracy. Always JPEG now regardless of the original
     # format, since downscale_for_preview() re-encodes to JPEG.
+    t2 = time.monotonic()
     preview_b64s = _downscale_previews_parallel([content for content, _mime_type in pages])
+    print(f"[detect-cases] preview thumbnails done in {time.monotonic() - t2:.2f}s (total {time.monotonic() - t0:.2f}s)", flush=True)
     previews = [
         CasePagePreview(
             page_number=i + 1,
