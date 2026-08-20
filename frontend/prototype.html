@@ -1235,6 +1235,10 @@ function renderCaseSplitStep0() {
       <input type="file" id="case-split-file-input" accept="image/*,application/pdf" multiple>
     </div>
     <div id="case-split-file-list" style="margin-top:10px"></div>
+    <div id="case-split-progress-wrap" style="display:none;margin-top:14px">
+      <div class="progress-bar-track"><div class="progress-bar-fill" id="case-split-progress-fill" style="width:0%"></div></div>
+      <div class="helper-text" id="case-split-progress-label" style="margin-top:4px;text-align:center"></div>
+    </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-primary" id="case-split-detect-btn">偵測案件分組</button>
@@ -1275,6 +1279,40 @@ function renderCaseSplitFileList() {
   });
 }
 
+// The backend detect steps are a single blocking request, not a pollable background
+// job, so there's no real "% of pages done" to report. This fakes a progress bar that
+// eases toward (but never quite reaches) 92% on an exponential curve while waiting,
+// then snaps to 100% the moment the request actually resolves - same idea as the
+// progress bars YouTube/most upload UIs show for a step whose real completion time
+// isn't known in advance, so it never looks "stuck" at a fixed number.
+function startFakeProgress(wrapId, fillId, labelId, tauSeconds = 20) {
+  const wrap = document.getElementById(wrapId);
+  const fill = document.getElementById(fillId);
+  const label = document.getElementById(labelId);
+  const startedAt = Date.now();
+  wrap.style.display = "";
+  const timer = setInterval(() => {
+    const elapsed = (Date.now() - startedAt) / 1000;
+    const pct = 92 * (1 - Math.exp(-elapsed / tauSeconds));
+    fill.style.width = `${pct}%`;
+    label.textContent = `偵測中...已等待 ${Math.floor(elapsed)} 秒,頁數多可能需要數分鐘`;
+  }, 250);
+  return {
+    finish() {
+      clearInterval(timer);
+      fill.style.width = "100%";
+      label.textContent = "完成";
+      setTimeout(() => {
+        wrap.style.display = "none";
+      }, 400);
+    },
+    stop() {
+      clearInterval(timer);
+      wrap.style.display = "none";
+    },
+  };
+}
+
 async function runDetectCases() {
   if (!caseSplitWizard.files.length) {
     toast("請先選擇至少一個檔案", "error");
@@ -1282,15 +1320,8 @@ async function runDetectCases() {
   }
   const btn = document.getElementById("case-split-detect-btn");
   btn.disabled = true;
-  const detectStartedAt = Date.now();
-  // No real per-page progress from the backend (it's one blocking request, not a
-  // pollable job) - a ticking elapsed-time counter at least tells the user it's still
-  // alive and roughly how long it's been running, instead of a static "偵測中..." that
-  // looks identical whether it's about to finish or actually stuck.
-  const tickTimer = setInterval(() => {
-    btn.textContent = `偵測中(已等待 ${Math.floor((Date.now() - detectStartedAt) / 1000)} 秒,頁數多可能需要數分鐘)...`;
-  }, 1000);
-  btn.textContent = "偵測中(頁數多可能需要數分鐘)...";
+  btn.textContent = "偵測中...";
+  const progress = startFakeProgress("case-split-progress-wrap", "case-split-progress-fill", "case-split-progress-label");
   try {
     const fd = new FormData();
     caseSplitWizard.files.forEach((f) => fd.append("files", f));
@@ -1330,12 +1361,12 @@ async function runDetectCases() {
       };
     });
 
+    progress.finish();
     await renderCaseSplitReview();
   } catch (err) {
+    progress.stop();
     btn.disabled = false;
     btn.textContent = "偵測案件分組";
-  } finally {
-    clearInterval(tickTimer);
   }
 }
 
@@ -1583,6 +1614,10 @@ function renderBuildingBatchStep0() {
       <input type="file" id="building-batch-file-input" accept="image/*,application/pdf" multiple>
     </div>
     <div id="building-batch-file-list" style="margin-top:10px"></div>
+    <div id="building-batch-progress-wrap" style="display:none;margin-top:14px">
+      <div class="progress-bar-track"><div class="progress-bar-fill" id="building-batch-progress-fill" style="width:0%"></div></div>
+      <div class="helper-text" id="building-batch-progress-label" style="margin-top:4px;text-align:center"></div>
+    </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-primary" id="building-batch-detect-btn">偵測建號並比對案件</button>
@@ -1630,25 +1665,20 @@ async function runDetectBuildingCases() {
   }
   const btn = document.getElementById("building-batch-detect-btn");
   btn.disabled = true;
-  const detectStartedAt = Date.now();
-  // Same elapsed-time ticker as runDetectCases() - there's no pollable job to show real
-  // per-page progress from, so this is just enough to tell the user it's still alive.
-  const tickTimer = setInterval(() => {
-    btn.textContent = `偵測比對中(已等待 ${Math.floor((Date.now() - detectStartedAt) / 1000)} 秒)...`;
-  }, 1000);
   btn.textContent = "偵測比對中...";
+  const progress = startFakeProgress("building-batch-progress-wrap", "building-batch-progress-fill", "building-batch-progress-label");
   try {
     const fd = new FormData();
     buildingBatchWizard.files.forEach((f) => fd.append("files", f));
     const result = await api("/ocr/detect-building-cases", { method: "POST", body: fd, isForm: true });
     if (result.warning) toast(result.warning, "error");
     buildingBatchWizard.groups = result.groups.map((g) => ({ ...g, selectedProjectId: g.matched_project_id || "" }));
+    progress.finish();
     await renderBuildingBatchReview();
   } catch (err) {
+    progress.stop();
     btn.disabled = false;
     btn.textContent = "偵測建號並比對案件";
-  } finally {
-    clearInterval(tickTimer);
   }
 }
 
