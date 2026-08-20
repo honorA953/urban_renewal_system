@@ -1566,7 +1566,8 @@ function renderBuildingBatchStep0() {
     <div class="helper-text" style="margin-bottom:10px">
       上傳一整份建物謄本(可涵蓋多筆建號)。系統會依每頁「頁次」自動拆成一筆一筆建號,讀出每筆的「建物坐落地號」,
       拿去比對現有案件的案件代碼——比對到的會自動預選對應案件,比對不到的請在下一步手動選擇。這一步只用本地 OCR
-      判斷,不會呼叫 AI,速度快也不花費 API 額度;所有權人等詳細資料會在下一步確認歸檔時才用 AI 辨識。
+      判斷,不會呼叫 AI,速度快也不花費 API 額度。確認歸檔只會把每組原始掃描頁存成 PDF 放進對應案件的「文件」分頁;
+      所有權人/建物等詳細資料要另外再進到各案件用「掃描謄本匯入」精靈辨識確認。
     </div>
     <div class="field">
       <label>選擇建物謄本圖片或 PDF</label>
@@ -1671,7 +1672,7 @@ async function renderBuildingBatchReview() {
                style="width:90px;height:90px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0">
           <div style="flex:1">
             <div style="font-weight:700">建號 ${escapeHtml(b.building_number || "-")}(${g.pages.length} 頁)</div>
-            <div class="helper-text" style="margin-top:2px">建物坐落地號:${escapeHtml(b.parcel_number || "(未讀到)")} · 所有權人等詳細資料將於確認歸檔時才用 AI 辨識</div>
+            <div class="helper-text" style="margin-top:2px">建物坐落地號:${escapeHtml(b.parcel_number || "(未讀到)")} · 所有權人等詳細資料請至各案件用「掃描謄本匯入」另外辨識</div>
             <div class="helper-text" style="margin-top:4px">${matched ? `✅ 已比對到案件:${escapeHtml(g.matched_project_name)}(${escapeHtml(g.matched_project_code)})` : "⚠ 未比對到現有案件,請手動選擇"}</div>
           </div>
           <button type="button" class="btn-danger btn-sm" data-remove-group="${i}" style="flex-shrink:0">移除</button>
@@ -1724,56 +1725,19 @@ async function runConfirmBuildingBatchImport() {
 
   const btn = document.getElementById("building-batch-confirm-btn");
   btn.disabled = true;
-  const landownerCacheByProject = new Map();
 
-  // Full AI extraction was deferred from the detect step (which only ran local OCR) to
-  // here, so it only runs for groups the user actually confirmed importing. Each
-  // group's extraction is an independent OpenAI call, so running them one at a time
-  // made total wait time scale linearly with group count (a 30-group batch waiting on
-  // 30 sequential round trips). Fire them off with a small concurrency cap instead -
-  // capped (not all at once) to stay within OpenAI's per-minute rate limit - and only
-  // fall back to the sequential archive/import loop once every group's extraction has
-  // resolved, so the DB-writing half of the loop (which does need to run in order per
-  // project for the landowner cache below) is unaffected.
-  const BUILDING_EXTRACT_CONCURRENCY = 4;
-  const extractionResults = new Array(groups.length);
-  let extractedCount = 0;
-  btn.textContent = `辨識中(0/${groups.length})...`;
-  let nextGroupIndex = 0;
-  async function extractWorker() {
-    while (nextGroupIndex < groups.length) {
-      const i = nextGroupIndex++;
-      const g = groups[i];
-      try {
-        const fd0 = new FormData();
-        g.pages.forEach((p, j) => fd0.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${j + 1}.jpg`));
-        extractionResults[i] = { ok: true, extracted: await api("/ocr/extract-building-group", { method: "POST", body: fd0, isForm: true }) };
-      } catch (err) {
-        extractionResults[i] = { ok: false };
-      }
-      extractedCount++;
-      btn.textContent = `辨識中(${extractedCount}/${groups.length})...`;
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(BUILDING_EXTRACT_CONCURRENCY, groups.length) }, extractWorker)
-  );
-
+  // AI extraction (所有權人/面積/地址 etc.) and the landowner/building-record creation
+  // that depends on it are deliberately skipped here for now - this step only archives
+  // each group's original scan pages as a merged PDF into its matched case's 文件 分頁.
+  // Confirming owner/building details is done later, per case, via that case's own
+  // 「掃描謄本匯入」精靈.
   try {
     for (let i = 0; i < groups.length; i++) {
       const g = groups[i];
       const pid = Number(g.selectedProjectId);
+      const b = g.building || {};
+      btn.textContent = `存檔中(第 ${i + 1}/${groups.length} 筆)...`;
 
-      let b = g.building || {};
-      const result = extractionResults[i];
-      btn.textContent = `匯入中(第 ${i + 1}/${groups.length} 筆)...`;
-
-      // Archive this group's original pages as one merged PDF, same as the 地號 batch
-      // import already does - see runConfirmCaseSplit. Deliberately done before the
-      // extraction-success check below: this only depends on the local OCR grouping
-      // (already done at detect time), not on the AI extraction call, so a group whose
-      // AI extraction failed should still get its original scan pages archived instead
-      // of silently ending up with nothing saved at all for that 建號.
       try {
         const fd = new FormData();
         g.pages.forEach((p, j) => fd.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${j + 1}.jpg`));
@@ -1783,62 +1747,10 @@ async function runConfirmBuildingBatchImport() {
       } catch (e) {
         toast(`建號${b.building_number || g.group}的原始掃描檔存檔失敗`, "error");
       }
-
-      if (!result.ok) {
-        toast(`建號${b.building_number || g.group}辨識失敗,所有權人等資料已略過(原始掃描檔已存檔)`, "error");
-        continue;
-      }
-      if (result.extracted.warning) toast(`第${g.group}組:${result.extracted.warning}`, "error");
-      if (result.extracted.building) b = result.extracted.building;
-
-      if (!state.projectCache[pid]) state.projectCache[pid] = {};
-      if (!state.projectCache[pid].landowners) {
-        state.projectCache[pid].landowners = await api(`/projects/${pid}/landowners`);
-      }
-      if (!landownerCacheByProject.has(pid)) landownerCacheByProject.set(pid, new Map());
-      const createdCache = landownerCacheByProject.get(pid);
-
-      // Link to the matching land record (by parcel_number) the same way
-      // submitTitleDeedWizard does, so this building doesn't just sit under a
-      // landowner unlinked from their 地號.
-      const landRecordIdByParcelOwner = new Map();
-      for (const owner of state.projectCache[pid].landowners) {
-        for (const lr of owner.land_records || []) {
-          landRecordIdByParcelOwner.set(`${(lr.parcel_number || "").trim()}::${owner.id}`, lr.id);
-        }
-      }
-
-      const floorAreaSqm = Number(b.total_area_sqm) || Number(b.floor_area_sqm) || 0;
-      const prevProjectId = state.currentProjectId;
-      state.currentProjectId = pid;
-      try {
-        for (const owner of b.owners || []) {
-          if (!owner.owner_name) continue;
-          const landownerId = await findOrCreateLandownerByOwner(owner, createdCache);
-          await api(`/projects/${pid}/landowners/${landownerId}/building-records`, {
-            method: "POST",
-            body: {
-              land_record_id: landRecordIdByParcelOwner.get(`${(b.parcel_number || "").trim()}::${landownerId}`) || null,
-              building_number: b.building_number || null,
-              address: b.building_address || null,
-              floor: b.floor || null,
-              total_floors: b.total_floors || null,
-              registration_order: owner.registration_order || null,
-              structure_area_sqm: floorAreaSqm,
-              auxiliary_area_sqm: 0,
-              common_area_sqm: 0,
-              ownership_numerator: owner.ownership_numerator || 1,
-              ownership_denominator: owner.ownership_denominator || 1,
-            },
-          });
-        }
-      } finally {
-        state.currentProjectId = prevProjectId;
-      }
     }
 
     closeModal();
-    toast("建物謄本已匯入完成", "success");
+    toast("建物謄本已存檔到對應案件", "success");
     buildingBatchWizard = null;
   } catch (err) {
     btn.disabled = false;
