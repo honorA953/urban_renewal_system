@@ -975,19 +975,30 @@ def detect_building_parcel_numbers(pages: list[tuple[bytes, str | None]], first_
     locally OCRs a taller top crop and returns {index: 建物坐落地號} for whichever ones a
     地號-suffixed match was found on. No OpenAI call."""
     def _ocr_one_group(i: int) -> tuple[int, str]:
+        page_start = time.monotonic()
         try:
             text = _ocr_header_text(_crop_top_strip(pages[i][0], fraction=BUILDING_BODY_CROP_FRACTION))
             parcel_number = _find_building_parcel_number(text)
+            # Kept as a permanent (not TEMP DEBUG) log, not just for slow-page failures -
+            # a real incident on the NAS showed this step going quiet for 5+ minutes with
+            # no other signal at all about whether it was still working or stuck, since
+            # the previous debug logging here had already been removed. Per-page timing
+            # is cheap and is the only way to tell "still grinding through weak NAS CPU"
+            # apart from "actually hung" after the fact from the log alone.
+            print(f"[detect_building_parcel_numbers] page {i + 1}: {time.monotonic() - page_start:.2f}s parcel_number={parcel_number!r}", flush=True)
             return i, parcel_number
         except Exception as exc:
-            print(f"[detect_building_parcel_numbers] page {i + 1} OCR/parse failed: {exc}", flush=True)
+            print(f"[detect_building_parcel_numbers] page {i + 1} OCR/parse failed after {time.monotonic() - page_start:.2f}s: {exc}", flush=True)
             return i, ""
 
     result: dict[int, str] = {}
     if not first_page_indices:
         return result
+    start = time.monotonic()
+    print(f"[detect_building_parcel_numbers] starting {len(first_page_indices)} group(s)", flush=True)
     with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(first_page_indices))) as pool:
         for i, parcel_number in pool.map(_ocr_one_group, first_page_indices):
             if parcel_number:
                 result[i] = parcel_number
+    print(f"[detect_building_parcel_numbers] done: {len(first_page_indices)} group(s) in {time.monotonic() - start:.2f}s", flush=True)
     return result

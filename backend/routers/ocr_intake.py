@@ -1,4 +1,5 @@
 import base64
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -90,19 +91,32 @@ def detect_building_cases_for_batch_import(
     matched_project_id=None for the frontend to offer manual selection. Full AI
     extraction (owners/address/floors) only happens later, per group, at actual import
     time - see runConfirmBuildingBatchImport in the frontend."""
+    # Permanent step-by-step timing log, not just for errors - a real incident on the
+    # NAS had this endpoint go quiet for 5+ minutes with zero other signal about which
+    # step it was stuck in. Cheap enough to always leave on.
+    t0 = time.monotonic()
     file_payload = [(upload.file.read(), upload.content_type) for upload in files]
     try:
         pages = _flatten_to_pages(file_payload)
     except OcrError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    print(f"[detect-building-cases] {len(pages)} page(s) rendered/loaded in {time.monotonic() - t0:.2f}s", flush=True)
 
+    t1 = time.monotonic()
     groups, group_warning = detect_case_groups(pages)
+    print(f"[detect-building-cases] case-grouping done in {time.monotonic() - t1:.2f}s", flush=True)
     group_numbers = sorted({g[0] for g in groups})
+
+    t2 = time.monotonic()
     projects_by_code = {p.project_code: p for p in db.scalars(select(Project)).all()}
+    print(f"[detect-building-cases] loaded {len(projects_by_code)} existing project code(s) in {time.monotonic() - t2:.2f}s", flush=True)
 
     first_page_index_by_group = {gn: next(i for i, g in enumerate(groups) if g[0] == gn) for gn in group_numbers}
     parcel_numbers_by_index = detect_building_parcel_numbers(pages, list(first_page_index_by_group.values()))
+
+    t3 = time.monotonic()
     preview_b64s = _downscale_previews_parallel([content for content, _mime_type in pages])
+    print(f"[detect-building-cases] preview thumbnails done in {time.monotonic() - t3:.2f}s (total so far {time.monotonic() - t0:.2f}s)", flush=True)
 
     warnings = [group_warning] if group_warning else []
     result_groups: list[BuildingGroupMatch] = []
