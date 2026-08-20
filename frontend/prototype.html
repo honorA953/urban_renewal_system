@@ -2557,6 +2557,10 @@ function renderWizardStep0() {
     </div>
     <div id="wizard-file-list"></div>
     <div class="helper-text">若有多張照片或多頁,請用下方的 ▲▼ 調整順序,順序需與謄本頁面順序一致</div>
+    <div id="wizard-ocr-progress-wrap" style="display:none;margin-top:14px">
+      <div class="progress-bar-track"><div class="progress-bar-fill" id="wizard-ocr-progress-fill" style="width:0%"></div></div>
+      <div class="helper-text" id="wizard-ocr-progress-label" style="margin-top:4px;text-align:center"></div>
+    </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-secondary" id="wizard-manual-group-btn">手動分組後再辨識</button>
@@ -2684,6 +2688,7 @@ async function runTitleDeedOcr() {
   const btn = document.getElementById("wizard-start-ocr-btn");
   btn.disabled = true;
   btn.textContent = "辨識中...(請稍候，勿關閉視窗)";
+  const progress = startFakeProgress("wizard-ocr-progress-wrap", "wizard-ocr-progress-fill", "wizard-ocr-progress-label");
   try {
     const fd = new FormData();
     titleDeedWizard.files.forEach((f) => fd.append("files", f));
@@ -2702,8 +2707,10 @@ async function runTitleDeedOcr() {
       titleDeedWizard.data = normalizeTitleDeedData(result.data);
       toast("辨識完成,請逐步核對每個區塊", "success");
     }
+    progress.finish();
     startWizardReview();
   } catch (err) {
+    progress.stop();
     btn.disabled = false;
     btn.textContent = "開始辨識";
   }
