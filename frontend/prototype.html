@@ -2529,6 +2529,7 @@ function renderWizardStep() {
 function startWizardReview() {
   const d = titleDeedWizard.data;
   titleDeedWizard.parcelSubStep = 0;
+  titleDeedWizard.buildingSubStep = 0;
   if (d.parcels.length) {
     titleDeedWizard.activeType = "parcel";
     titleDeedWizard.activeIndex = 0;
@@ -3024,6 +3025,7 @@ function advanceFromParcel(idx) {
   } else if (d.buildings.length) {
     titleDeedWizard.activeType = "building";
     titleDeedWizard.activeIndex = 0;
+    titleDeedWizard.buildingSubStep = 0;
     titleDeedWizard.step = 3;
     renderWizardStep();
   } else {
@@ -3311,6 +3313,7 @@ function readEncumbranceRows(containerId) {
 // parcels, so there's no further record type to fall through to here).
 function advanceFromBuilding(idx) {
   const d = titleDeedWizard.data;
+  titleDeedWizard.buildingSubStep = 0;
   if (idx < d.buildings.length) {
     titleDeedWizard.activeIndex = idx;
     renderWizardStep();
@@ -3320,15 +3323,21 @@ function advanceFromBuilding(idx) {
   }
 }
 
+// Same two-sub-step pattern as the parcel editor (see renderWizardStepParcelEditor) -
+// 建物標示部 first, 建物所有權部 second - instead of one long combined form, mirroring
+// how the deed itself is actually laid out. titleDeedWizard.buildingSubStep (0/1).
 function renderWizardStepBuildingEditor() {
-  const idx = titleDeedWizard.activeIndex;
+  const substeps = [renderBuildingDescriptionSubStep, renderBuildingOwnersSubStep];
+  substeps[titleDeedWizard.buildingSubStep || 0](titleDeedWizard.activeIndex);
+}
+
+function renderBuildingDescriptionSubStep(idx) {
   const buildings = titleDeedWizard.data.buildings;
   const b = buildings[idx];
-  const isLast = idx === buildings.length - 1;
   openModal(
     "掃描謄本匯入",
     `
-    ${wizardProgressHtml(`建號編輯(第 ${idx + 1} / ${buildings.length} 筆)`)}
+    ${wizardProgressHtml(`建號編輯(第 ${idx + 1} / ${buildings.length} 筆) · 1/2 建物標示部`)}
     <div style="margin-bottom:10px">
       <button type="button" class="btn-secondary btn-sm" id="wizard-rescan-btn">重新上傳這一筆的建物謄本檔案並辨識</button>
     </div>
@@ -3343,42 +3352,24 @@ function renderWizardStepBuildingEditor() {
       </div>
       <div class="field-row">
         <div class="field"><label>層次</label><input name="floor" value="${escapeHtml(b.floor)}" autocomplete="off"></div>
-        <div class="field"><label>建物總面積(㎡)</label><input name="total_area_sqm" id="wizard-building-total-area" type="number" step="0.01" value="${escapeHtml(
-          b.total_area_sqm
-        )}" autocomplete="off"></div>
+        <div class="field"><label>建物總面積(㎡)</label><input name="total_area_sqm" value="${escapeHtml(b.total_area_sqm)}" type="number" step="0.01" autocomplete="off"></div>
       </div>
-      <div class="field"><label>層次面積(㎡)</label><input name="floor_area_sqm" id="wizard-building-floor-area" type="number" step="0.01" value="${escapeHtml(
-        b.floor_area_sqm
-      )}" autocomplete="off"></div>
+      <div class="field"><label>層次面積(㎡)</label><input name="floor_area_sqm" value="${escapeHtml(b.floor_area_sqm)}" type="number" step="0.01" autocomplete="off"></div>
     </form>
-    <div class="helper-text" style="font-weight:600;margin-top:14px">建物所有權部</div>
-    <div id="wizard-building-owners" style="margin:6px 0"></div>
-    <button type="button" class="btn-secondary btn-sm" id="wizard-add-building-owner-btn">+ 新增共有人</button>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-danger" id="wizard-delete-building-btn">刪除此筆</button>
       ${idx > 0 ? `<button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一筆</button>` : ""}
-      <button type="button" class="btn-primary" id="wizard-next-item-btn">${isLast ? "下一步" : "下一筆建號"}</button>
+      <button type="button" class="btn-primary" id="wizard-next-item-btn">下一步:建物所有權部</button>
     </div>`,
-    { width: "660px" }
+    { width: "620px" }
   );
 
-  const currentAreaSqm = () =>
-    Number(document.getElementById("wizard-building-total-area").value) ||
-    Number(document.getElementById("wizard-building-floor-area").value) ||
-    null;
-  renderOwnerRowsContainer("wizard-building-owners", b.owners, "bo", currentAreaSqm());
-
   document.getElementById("wizard-rescan-btn").addEventListener("click", () => {
-    openWizardSingleRecordRescan("building", b, renderWizardStepBuildingEditor);
-  });
-  document.getElementById("wizard-add-building-owner-btn").addEventListener("click", () => {
-    b.owners = readOwnerRowsContainer("wizard-building-owners", "bo");
-    b.owners.push({ registration_order: "", owner_name: "", ownership_numerator: 1, ownership_denominator: 1, address: "" });
-    renderOwnerRowsContainer("wizard-building-owners", b.owners, "bo", currentAreaSqm());
+    openWizardSingleRecordRescan("building", b, () => renderBuildingDescriptionSubStep(idx));
   });
 
-  const saveCurrentBuilding = () => {
+  const saveFields = () => {
     const fd = new FormData(document.getElementById("wizard-step-form"));
     Object.assign(b, {
       building_number: (fd.get("building_number") || "").trim(),
@@ -3389,24 +3380,64 @@ function renderWizardStepBuildingEditor() {
       total_area_sqm: fd.get("total_area_sqm") || "",
       floor_area_sqm: fd.get("floor_area_sqm") || "",
     });
-    b.owners = readOwnerRowsContainer("wizard-building-owners", "bo");
   };
 
   const prevBtn = document.getElementById("wizard-prev-item-btn");
   if (prevBtn) {
     prevBtn.addEventListener("click", () => {
-      saveCurrentBuilding();
+      saveFields();
       titleDeedWizard.activeIndex = idx - 1;
+      titleDeedWizard.buildingSubStep = 1; // land on the previous building's last sub-step
       renderWizardStep();
     });
   }
   document.getElementById("wizard-next-item-btn").addEventListener("click", () => {
-    saveCurrentBuilding();
-    advanceFromBuilding(idx + 1);
+    saveFields();
+    titleDeedWizard.buildingSubStep = 1;
+    renderWizardStep();
   });
   document.getElementById("wizard-delete-building-btn").addEventListener("click", () => {
     buildings.splice(idx, 1);
     advanceFromBuilding(idx);
+  });
+}
+
+function renderBuildingOwnersSubStep(idx) {
+  const buildings = titleDeedWizard.data.buildings;
+  const b = buildings[idx];
+  const isLast = idx === buildings.length - 1;
+  openModal(
+    "掃描謄本匯入",
+    `
+    ${wizardProgressHtml(`建號編輯(第 ${idx + 1} / ${buildings.length} 筆) · 2/2 建物所有權部`)}
+    <div class="helper-text" style="margin-bottom:10px">${escapeHtml(buildingSummaryLabel(b))}</div>
+    <div id="wizard-building-owners" style="margin:6px 0"></div>
+    <button type="button" class="btn-secondary btn-sm" id="wizard-add-building-owner-btn">+ 新增共有人</button>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+      <button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一步</button>
+      <button type="button" class="btn-primary" id="wizard-next-item-btn">${isLast ? "下一步" : "下一筆建號"}</button>
+    </div>`,
+    { width: "620px" }
+  );
+
+  const areaSqm = Number(b.total_area_sqm) || Number(b.floor_area_sqm) || null;
+  renderOwnerRowsContainer("wizard-building-owners", b.owners, "bo", areaSqm);
+
+  document.getElementById("wizard-add-building-owner-btn").addEventListener("click", () => {
+    b.owners = readOwnerRowsContainer("wizard-building-owners", "bo");
+    b.owners.push({ registration_order: "", owner_name: "", ownership_numerator: 1, ownership_denominator: 1, address: "" });
+    renderOwnerRowsContainer("wizard-building-owners", b.owners, "bo", areaSqm);
+  });
+
+  document.getElementById("wizard-prev-item-btn").addEventListener("click", () => {
+    b.owners = readOwnerRowsContainer("wizard-building-owners", "bo");
+    titleDeedWizard.buildingSubStep = 0;
+    renderWizardStep();
+  });
+  document.getElementById("wizard-next-item-btn").addEventListener("click", () => {
+    b.owners = readOwnerRowsContainer("wizard-building-owners", "bo");
+    advanceFromBuilding(idx + 1);
   });
 }
 
@@ -3485,6 +3516,7 @@ function renderWizardStepConfirm() {
     if (d.buildings.length) {
       titleDeedWizard.activeType = "building";
       titleDeedWizard.activeIndex = d.buildings.length - 1;
+      titleDeedWizard.buildingSubStep = 1;
       titleDeedWizard.step = 3;
     } else if (d.parcels.length) {
       titleDeedWizard.activeType = "parcel";
