@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -419,15 +420,21 @@ def _merge_extractions(chunk_results: list[dict]) -> dict:
 # multi-page/multi-group batches use more than one CPU core instead of OCR'ing pages
 # one at a time.
 #
-# Was 4, dropped to 2 after a real NAS run logged 41 header-crop OCR calls taking
-# 191s total (~4.6s/page average) despite each call individually being a tiny,
-# aggressively-downsized crop that should be well under a second - on this NAS's 2
+# Was a flat 4, then a flat 2 after a real NAS run logged 41 header-crop OCR calls
+# taking 191s total (~4.6s/page average) despite each call individually being a tiny,
+# aggressively-downsized crop that should be well under a second - on that NAS's 2
 # physical cores (a Celeron), onnxruntime's own internal intra-op thread pool inside
-# each InferenceSession.run() call means 4 *external* threads each also spawn their own
-# *internal* threads, oversubscribing 2 cores several times over and burning most of the
-# time on context-switching instead of actual inference. Matching the external pool size
-# to the physical core count removes that multiplier.
-_HEADER_OCR_WORKERS = 2
+# each InferenceSession.run() call means N *external* threads each also spawn their own
+# *internal* threads, oversubscribing the CPU several times over and burning most of the
+# time on context-switching instead of actual inference. A flat constant tuned for that
+# 2-core NAS then badly under-used this same code's other deployment target - a
+# multi-core dev machine (e.g. 16 logical cores) - stuck at 2 concurrent OCR calls no
+# matter how many cores were sitting idle. Scaling with os.cpu_count() instead fixes
+# both: 2 on the weak NAS, more on stronger hardware. Capped at 8 as a reasonable ceiling
+# - onnxruntime's own internal per-call threading means the oversubscription risk
+# described above doesn't fully go away just because more cores exist, so this doesn't
+# scale unbounded with core count on a many-core machine.
+_HEADER_OCR_WORKERS = min(os.cpu_count() or 2, 8)
 
 # Loading RapidOCR's models takes a couple seconds - doing that once per process and
 # reusing the engine avoids paying that cost on every single page.
