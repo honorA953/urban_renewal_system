@@ -418,8 +418,17 @@ def _merge_extractions(chunk_results: list[dict]) -> dict:
 # the GIL during inference and is safe to call concurrently from multiple threads on
 # the same session, so running these header OCR calls in a small thread pool lets
 # multi-page/multi-group batches use more than one CPU core instead of OCR'ing pages
-# one at a time. Capped at 4 to stay reasonable on the underpowered NAS deployment.
-_HEADER_OCR_WORKERS = 4
+# one at a time.
+#
+# Was 4, dropped to 2 after a real NAS run logged 41 header-crop OCR calls taking
+# 191s total (~4.6s/page average) despite each call individually being a tiny,
+# aggressively-downsized crop that should be well under a second - on this NAS's 2
+# physical cores (a Celeron), onnxruntime's own internal intra-op thread pool inside
+# each InferenceSession.run() call means 4 *external* threads each also spawn their own
+# *internal* threads, oversubscribing 2 cores several times over and burning most of the
+# time on context-switching instead of actual inference. Matching the external pool size
+# to the physical core count removes that multiplier.
+_HEADER_OCR_WORKERS = 2
 
 # Loading RapidOCR's models takes a couple seconds - doing that once per process and
 # reusing the engine avoids paying that cost on every single page.
@@ -872,14 +881,8 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tupl
     with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(pages))) as pool:
         page_results = list(pool.map(lambda args: _ocr_one_page(*args), enumerate(content for content, _mime_type in pages)))
 
-    raw_texts: list[str] = []  # TEMP DEBUG
-    entries: list[tuple[str, str, int | None]] = []
-    failed_pages: list[int] = []
-    for i, (text, entry) in enumerate(page_results):
-        raw_texts.append(text)  # TEMP DEBUG
-        entries.append(entry)
-        if entry[0] == "(偵測失敗)":
-            failed_pages.append(i + 1)
+    entries: list[tuple[str, str, int | None]] = [entry for _text, entry in page_results]
+    failed_pages: list[int] = [i + 1 for i, entry in enumerate(entries) if entry[0] == "(偵測失敗)"]
 
     grouped: list[tuple[int, str, str]] = []
     group = 1
@@ -908,17 +911,15 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tupl
         if label != "(偵測失敗)":
             prev_sample_number = sample_number
 
-    # TEMP DEBUG - remove once the case-split grouping issue is diagnosed. Prints what
-    # each page was actually detected as (including the raw OCR text and the matched
-    # 頁次 digits) so a live log-tail can show exactly which page the OCR/regex misread
-    # instead of guessing from the UI's end result.
-    print("[detect_case_groups] per-page detection:", flush=True)
-    for i, ((group_no, label, sample_number), (_l, _s, seq)) in enumerate(zip(grouped, entries)):
-        print(
-            f"  page {i + 1}: group={group_no} location={label!r} sample_number={sample_number!r} 頁次={seq!r}",
-            flush=True,
-        )
-        print(f"    raw_ocr={raw_texts[i]!r}", flush=True)
+    # One line per page, not the full raw OCR text dump this used to include - that was
+    # useful while actively diagnosing the grouping-boundary bug (now fixed, see the
+    # is_new_group fallback above), but printing 2+ lines of full raw OCR text per page
+    # on every single batch forever is a lot of unnecessary log I/O for no ongoing
+    # benefit, and on a NAS where disk/log I/O is already a scarce resource that's worth
+    # trimming. Kept as one compact summary line so which-page-went-to-which-group is
+    # still visible in the log if something looks off.
+    summary = " ".join(f"{i + 1}:g{group_no}" for i, (group_no, _l, _s) in enumerate(grouped))
+    print(f"[detect_case_groups] {len(grouped)} page(s) -> groups: {summary}", flush=True)
 
     warning = (
         f"第{'、'.join(str(p) for p in failed_pages)}頁自動分案偵測失敗,已強制獨立成一組,請務必手動確認分組"
