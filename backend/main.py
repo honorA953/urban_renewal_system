@@ -1,4 +1,3 @@
-import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,7 +8,6 @@ from database import SessionLocal, wait_for_db
 import models  # noqa: F401 - ensures all models are registered with SQLAlchemy
 from routers import auth, contacts, documents, encumbrances, expenses, landowners, ocr, ocr_intake, projects, sop, users
 from seed import ensure_admin_account
-from utils.ocr import _get_header_ocr_engine, _get_ocr_engine
 
 
 @asynccontextmanager
@@ -20,15 +18,14 @@ async def lifespan(app: FastAPI):
         ensure_admin_account(db)
     finally:
         db.close()
-    # RapidOCR's model load takes a couple seconds - without this, that cost lands on
-    # whichever request happens to be the first OCR call after the process starts
-    # (typically a batch import's "偵測比對中" step), making it look far slower than
-    # every request after it. Loading both engines here instead means that cost is paid
-    # once at startup, off the request path. Runs in a thread so a slow model load
-    # doesn't delay the app accepting other requests.
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _get_ocr_engine)
-    loop.run_in_executor(None, _get_header_ocr_engine)
+    # Deliberately NOT eagerly loading the RapidOCR engines here anymore - tried that to
+    # shave the model-load cost off the first OCR request, but on the NAS this runs on
+    # (only ~5.6GB RAM total, already shared with MariaDB/nginx/cloudflared/DSM, and
+    # observed sitting at ~4.5GB used + heavy swap even before this app does anything)
+    # loading both engines' models at startup instead of lazily on first use was enough
+    # extra memory pressure to trigger repeated unexplained container restarts. Lazily
+    # loading on first OCR call (see _get_ocr_engine/_get_header_ocr_engine in utils/ocr.py)
+    # is slower for that one request but doesn't add a permanent extra footprint.
     yield
 
 
