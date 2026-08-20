@@ -815,16 +815,16 @@ def _find_page_sequence(text: str) -> int | None:
     return None
 
 
-def _parse_case_header(text: str) -> tuple[str, str, bool]:
-    """Pulls this page's (地點, 地號/建號, is_first_page) straight out of its OCR'd
-    header text. On success, is_first_page (是否「頁次:000001」, see _find_page_sequence)
-    is what detect_case_groups() uses to decide group boundaries - comparing 地號/建號
-    strings directly was tried first and turned out too fragile: a single misread digit
-    in a multi-digit 地號 (e.g. a vision model conflating the adjacent 頁次 field and
-    reading "0230-0000"/"000003" as if "0230-0003" was the parcel number) silently
-    fractured one real group into two. is_first_page only needs a binary "is this
-    000001 or not" judgment. location and sample_number are kept only for suggesting a
-    readable case name/code, not used for the boundary."""
+def _parse_case_header(text: str) -> tuple[str, str, int | None]:
+    """Pulls this page's (地點, 地號/建號, 頁次) straight out of its OCR'd header text.
+    The 頁次 value (None if unreadable - see _find_page_sequence) is what
+    detect_case_groups() uses to decide group boundaries - comparing 地號/建號 strings
+    directly was tried first and turned out too fragile: a single misread digit in a
+    multi-digit 地號 (e.g. a vision model conflating the adjacent 頁次 field and reading
+    "0230-0000"/"000003" as if "0230-0003" was the parcel number) silently fractured one
+    real group into two. location and sample_number are kept both for suggesting a
+    readable case name/code, and (since detect_case_groups() below now falls back to
+    them when 頁次 is unreadable) as a secondary boundary signal."""
     # OCR sometimes splits the title across two detected lines right at the 小段
     # boundary (e.g. 「信義區祥和段」 / 「小段0250-0000地號」as separate lines) - flatten
     # newlines before matching so the title pattern still catches it as one string.
@@ -843,9 +843,7 @@ def _parse_case_header(text: str) -> tuple[str, str, bool]:
         location, sample_number = match.group("location"), match.group("number")
         break
 
-    seq = _find_page_sequence(text)
-    is_first_page = True if seq is None else seq == 1  # unknown defaults to "new group" - safer than a silent merge
-    return location, sample_number, is_first_page
+    return location, sample_number, _find_page_sequence(text)
 
 
 def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tuple[int, str, str]], str | None]:
@@ -863,19 +861,19 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tupl
     if not pages:
         return [], None
 
-    def _ocr_one_page(i: int, content: bytes) -> tuple[str, tuple[str, str, bool]]:
+    def _ocr_one_page(i: int, content: bytes) -> tuple[str, tuple[str, str, int | None]]:
         try:
             text = _ocr_header_text(_crop_top_strip(content))
             return text, _parse_case_header(text)
         except Exception as exc:
             print(f"[detect_case_groups] page {i + 1} OCR/parse failed: {exc}", flush=True)
-            return "", ("(偵測失敗)", "", True)
+            return "", ("(偵測失敗)", "", None)
 
     with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(pages))) as pool:
         page_results = list(pool.map(lambda args: _ocr_one_page(*args), enumerate(content for content, _mime_type in pages)))
 
     raw_texts: list[str] = []  # TEMP DEBUG
-    entries: list[tuple[str, str, bool]] = []
+    entries: list[tuple[str, str, int | None]] = []
     failed_pages: list[int] = []
     for i, (text, entry) in enumerate(page_results):
         raw_texts.append(text)  # TEMP DEBUG
@@ -885,21 +883,39 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tupl
 
     grouped: list[tuple[int, str, str]] = []
     group = 1
-    for i, (label, sample_number, is_first_page) in enumerate(entries):
-        if i > 0 and is_first_page:
-            group += 1
+    prev_sample_number = ""
+    for i, (label, sample_number, seq) in enumerate(entries):
+        if i > 0:
+            if label == "(偵測失敗)":
+                is_new_group = True  # OCR/parse blew up - can't trust anything about this page, so isolate it
+            elif seq == 1:
+                is_new_group = True  # explicit 頁次:000001 - trust it over everything else
+            elif seq is None:
+                # 頁次 line itself couldn't be read (garbled 列印時間 line, odd layout,
+                # ...) - rather than defaulting to "new group" (which silently fractured
+                # a single real 地號/建號's pages into two groups sharing the same
+                # detected code whenever this happened, and then made batch-create 409
+                # on the second one's duplicate project_code), fall back to comparing
+                # this page's own 地號/建號 against the group we're currently in: same
+                # code very likely means "still the same case, 頁次 just didn't OCR
+                # cleanly", different code (or none) means a real new case starts here.
+                is_new_group = not (sample_number and sample_number == prev_sample_number)
+            else:
+                is_new_group = False  # 頁次 > 1 - definitely a continuation page
+            if is_new_group:
+                group += 1
         grouped.append((group, label, sample_number))
+        if label != "(偵測失敗)":
+            prev_sample_number = sample_number
 
     # TEMP DEBUG - remove once the case-split grouping issue is diagnosed. Prints what
     # each page was actually detected as (including the raw OCR text and the matched
     # 頁次 digits) so a live log-tail can show exactly which page the OCR/regex misread
     # instead of guessing from the UI's end result.
     print("[detect_case_groups] per-page detection:", flush=True)
-    for i, ((group_no, label, sample_number), (_l, _s, is_first_page)) in enumerate(zip(grouped, entries)):
-        seq = _find_page_sequence(raw_texts[i])
+    for i, ((group_no, label, sample_number), (_l, _s, seq)) in enumerate(zip(grouped, entries)):
         print(
-            f"  page {i + 1}: group={group_no} location={label!r} sample_number={sample_number!r} "
-            f"is_first_page={is_first_page} 頁次={seq!r}",
+            f"  page {i + 1}: group={group_no} location={label!r} sample_number={sample_number!r} 頁次={seq!r}",
             flush=True,
         )
         print(f"    raw_ocr={raw_texts[i]!r}", flush=True)
