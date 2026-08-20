@@ -374,6 +374,14 @@
   .sub-detail { background: var(--surface-2); padding: 12px 14px; border-radius: var(--radius-sm); margin-top: 6px; font-size: 14px; color: var(--text-muted); line-height: 1.6; }
   .sub-detail table { box-shadow: none; }
 
+  .wizard-confirm-section-title { font-weight: 700; font-size: 14px; margin-top: 18px; margin-bottom: 8px; }
+  .wizard-confirm-section-title:first-of-type { margin-top: 0; }
+  .wizard-confirm-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; margin-top: 8px; }
+  .wizard-confirm-card-title { font-weight: 600; font-size: 14.5px; margin-bottom: 6px; }
+  .wizard-confirm-card-row { display: flex; gap: 8px; font-size: 13.5px; line-height: 1.7; color: var(--text-muted); }
+  .wizard-confirm-card-row + .wizard-confirm-card-row { margin-top: 2px; }
+  .wizard-confirm-card-label { flex-shrink: 0; color: var(--text-secondary, var(--text-muted)); font-weight: 600; }
+
   .section-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 10px; flex-wrap: wrap; }
   .section-toolbar h3 { margin: 0; font-size: 16.5px; font-weight: 700; }
 
@@ -2641,7 +2649,7 @@ async function runTitleDeedOcr() {
   }
   const btn = document.getElementById("wizard-start-ocr-btn");
   btn.disabled = true;
-  btn.textContent = "辨識中...(請耐心等候、勿關閉視窗)";
+  btn.textContent = "辨識中...(請稍候，勿關閉視窗)";
   try {
     const fd = new FormData();
     titleDeedWizard.files.forEach((f) => fd.append("files", f));
@@ -2649,7 +2657,7 @@ async function runTitleDeedOcr() {
     const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
 
     if (result.job.status !== "completed") {
-      toast(result.job.error_message || "辨識失敗,請手動輸入各欄位", "error");
+      toast(result.job.error_message || "辨識失敗,請手動輸入欄位", "error");
       titleDeedWizard.data = normalizeTitleDeedData(null);
     } else if (result.job.error_message) {
       // Completed, but part of a multi-chunk batch failed - the rest of the data is
@@ -3326,44 +3334,57 @@ function renderWizardStepBuildingEditor() {
 
 function renderWizardStepConfirm() {
   const d = titleDeedWizard.data;
+  const parcelCardHtml = (p) => `
+    <div class="wizard-confirm-card">
+      <div class="wizard-confirm-card-title">${escapeHtml(parcelSummaryLabel(p))}</div>
+      <div class="wizard-confirm-card-row">
+        <span class="wizard-confirm-card-label">所有權人</span>
+        <span>${p.owners.map((o) => `${escapeHtml(o.owner_name) || "-"}(${o.ownership_numerator}/${o.ownership_denominator})`).join("、")}</span>
+      </div>
+      ${
+        (p.encumbrances || []).length
+          ? `<div class="wizard-confirm-card-row">
+              <span class="wizard-confirm-card-label">他項權利</span>
+              <span>${(p.encumbrances || []).map((e) => escapeHtml(e.right_type) || "-").join("、")}</span>
+            </div>`
+          : ""
+      }
+    </div>`;
   const parcelsHtml = d.parcels.length
-    ? d.parcels
-        .map(
-          (p) =>
-            `<div class="sub-detail" style="margin-top:8px">${escapeHtml(parcelSummaryLabel(p))}<br>${p.owners
-              .map((o) => `${escapeHtml(o.owner_name) || "-"}(${o.ownership_numerator}/${o.ownership_denominator})`)
-              .join("、")}${(p.encumbrances || []).length ? `<br>他項權利:${(p.encumbrances || []).map((e) => escapeHtml(e.right_type) || "-").join("、")}` : ""}</div>`
-        )
-        .join("")
+    ? d.parcels.map(parcelCardHtml).join("")
     : `<div class="helper-text" style="margin-top:8px">(本次未包含土地資料)</div>`;
-  const buildingsHtml = d.buildings.length
-    ? d.buildings
+  const buildingsSectionHtml = d.buildings.length
+    ? `<div class="wizard-confirm-section-title">建物建號(${d.buildings.length})</div>
+      ${d.buildings
         .map(
-          (b) =>
-            `<div class="sub-detail" style="margin-top:8px">${escapeHtml(buildingSummaryLabel(b))}<br>${b.owners
-              .map((o) => `${escapeHtml(o.owner_name) || "-"}(${o.ownership_numerator}/${o.ownership_denominator})`)
-              .join("、")}</div>`
+          (b) => `
+        <div class="wizard-confirm-card">
+          <div class="wizard-confirm-card-title">${escapeHtml(buildingSummaryLabel(b))}</div>
+          <div class="wizard-confirm-card-row">
+            <span class="wizard-confirm-card-label">所有權人</span>
+            <span>${b.owners.map((o) => `${escapeHtml(o.owner_name) || "-"}(${o.ownership_numerator}/${o.ownership_denominator})`).join("、")}</span>
+          </div>
+        </div>`
         )
-        .join("")
-    : `<div class="helper-text" style="margin-top:8px">(本次未包含建物資料)</div>`;
+        .join("")}`
+    : "";
   openModal(
     "掃描謄本匯入",
     `
     ${wizardProgressHtml("確認建立")}
-    <div class="final-banner warning" style="margin-bottom:14px">⚠ 建立前最後確認:以下姓名、地址、面積等內容為 AI 辨識結果,可能有誤或臆測,請務必已逐筆對照原始掃描件</div>
-    <div class="helper-text" style="font-weight:600">土地地號(${d.parcels.length})</div>
+    <div class="final-banner warning" style="margin-bottom:16px">⚠️ 建立前最後確認：以下姓名、地址、面積等內容為 AI 辨識結果，可能有誤或臆測，請務必逐筆對照原始掃描件</div>
+    <div class="wizard-confirm-section-title">土地地號(${d.parcels.length})</div>
     ${parcelsHtml}
-    <div class="helper-text" style="font-weight:600;margin-top:16px">建物建號(${d.buildings.length})</div>
-    ${buildingsHtml}
+    ${buildingsSectionHtml}
     ${
       d.encumbrances.length
-        ? `<div class="helper-text" style="font-weight:600;margin-top:16px">跨地號/建號的他項權利(${d.encumbrances.length})</div>
-          <div class="sub-detail" style="margin-top:8px">
+        ? `<div class="wizard-confirm-section-title">跨地號/建號的他項權利(${d.encumbrances.length})</div>
+          <div class="wizard-confirm-card">
             ${d.encumbrances.map((e) => `${escapeHtml(e.right_type) || "-"} · ${escapeHtml(e.right_holder) || "-"}`).join("、")}
           </div>`
         : ""
     }
-    <div class="helper-text" style="margin-top:12px">確認無誤後點「建立」,系統會自動比對/建立地主,並寫入土地、建物、他項權利資料。同一人若出現在多筆地號/建號,只會建立一筆地主。</div>
+    <div class="helper-text" style="margin-top:14px;line-height:1.6">確認無誤後點「建立」，系統會自動比對／建立地主，並寫入土地、建物、他項權利資料。同一人若出現在多筆地號／建號，只會建立一筆地主。</div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" id="wizard-prev-btn">上一步</button>
       <button type="button" class="btn-primary" id="wizard-confirm-btn">建立</button>
