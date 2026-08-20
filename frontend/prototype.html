@@ -3640,12 +3640,10 @@ async function renderSopSummary() {
   let actionPanel = "";
   if (!isFinished && currentStage) {
     const isDualGate = DUAL_GATE_STAGES.includes(sop.current_stage);
-    const stageLabel = currentStage.name.split(":")[1] || currentStage.name;
     actionPanel = `
       <div class="card" style="padding:24px">
-        <div style="font-size:18px;font-weight:700;margin-bottom:14px">${formatStageLabelHtml(stageLabel)}</div>
         ${isDualGate ? `<div id="consent-panel"></div>` : ""}
-        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <div style="${isDualGate ? "margin-top:14px;" : ""}display:flex;gap:10px;flex-wrap:wrap">
           ${
             isEditor()
               ? `<button class="btn-primary" id="complete-stage-btn">完成本關卡</button>
