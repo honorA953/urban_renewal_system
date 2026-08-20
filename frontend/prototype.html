@@ -2616,16 +2616,17 @@ async function openWizardDocumentPicker() {
   openModal(
     "從本案件文件選擇",
     `
+    ${documents.length ? `<div class="helper-text" style="margin-bottom:10px">可勾選多個文件一次加入</div>` : ""}
     <div id="wizard-document-picker-list">
       ${
         documents.length
           ? documents
               .map(
                 (d) => `
-              <div class="record-row" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px">
+              <label class="record-row" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer">
+                <input type="checkbox" class="wizard-document-checkbox" value="${d.id}" style="width:auto;flex-shrink:0">
                 <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.file_name)}${d.description ? ` · ${escapeHtml(d.description)}` : ""}</span>
-                <button type="button" class="btn-primary btn-sm" data-pick-document="${d.id}">選擇</button>
-              </div>`
+              </label>`
               )
               .join("")
           : `<div class="helper-text">本案件尚未有可選擇的圖片或 PDF 文件</div>`
@@ -2633,26 +2634,39 @@ async function openWizardDocumentPicker() {
     </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="renderWizardStep0()">返回</button>
+      ${documents.length ? `<button type="button" class="btn-primary" id="wizard-document-picker-confirm-btn">加入選取的文件</button>` : ""}
     </div>`,
     { width: "560px" }
   );
 
-  document.querySelectorAll("[data-pick-document]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const doc = documents.find((d) => d.id === Number(btn.dataset.pickDocument));
-      btn.disabled = true;
-      btn.textContent = "載入中...";
+  const confirmBtn = document.getElementById("wizard-document-picker-confirm-btn");
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", async () => {
+      const checked = Array.from(document.querySelectorAll(".wizard-document-checkbox:checked"));
+      if (!checked.length) {
+        toast("請至少勾選一個文件", "error");
+        return;
+      }
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "載入中...";
       try {
-        const res = await api(`/projects/${state.currentProjectId}/documents/${doc.id}/download`);
-        const blob = await res.blob();
-        titleDeedWizard.files.push(new File([blob], doc.file_name, { type: doc.mime_type }));
+        // Sequential, not parallel - keeps the added files in the same order the user
+        // checked them in, matching how manually-selected files already preserve
+        // selection order, instead of resolving in whatever order the downloads happen
+        // to finish.
+        for (const checkbox of checked) {
+          const doc = documents.find((d) => d.id === Number(checkbox.value));
+          const res = await api(`/projects/${state.currentProjectId}/documents/${doc.id}/download`);
+          const blob = await res.blob();
+          titleDeedWizard.files.push(new File([blob], doc.file_name, { type: doc.mime_type }));
+        }
         renderWizardStep0();
       } catch (e) {
-        btn.disabled = false;
-        btn.textContent = "選擇";
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "加入選取的文件";
       }
     });
-  });
+  }
 }
 
 function renderWizardFileList() {
