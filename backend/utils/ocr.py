@@ -441,7 +441,7 @@ def _ocr_page_text(content: bytes) -> str:
     than trying to filter it heuristically here and risking real text getting dropped."""
     img = Image.open(io.BytesIO(content)).convert("RGB")
     result, _ = _get_ocr_engine()(np.array(img))
-    return "\n".join(line[1] for line in result) if result else ""
+    return _normalize_ocr_text("\n".join(line[1] for line in result)) if result else ""
 
 
 # A separate, more aggressively-tuned engine used only for the small header-strip crop
@@ -464,12 +464,31 @@ def _get_header_ocr_engine() -> RapidOCR:
     return _HEADER_OCR_ENGINE
 
 
+# Full-width digits and various dash-like punctuation glyphs (fullwidth/em/en dash,
+# katakana long-sound mark, etc.) all show up in real OCR output for what's printed as a
+# plain ASCII "0242-0000" on the page - every 地號/建號 regex below only recognizes
+# ASCII digits and a literal "-", so a page that happens to OCR as "０２４２－００００"
+# silently produced no match at all (case ended up "偵測失敗" / 建物坐落地號 blank, and
+# the batch import couldn't auto-match a case that visibly has the right 地號). Folding
+# these to ASCII right after OCR fixes every downstream regex at once instead of having
+# to special-case each one.
+_FULLWIDTH_DIGIT_MAP = str.maketrans("０１２３４５６７８９", "0123456789")
+_DASH_VARIANTS = "－—–─﹣ｰ"
+
+
+def _normalize_ocr_text(text: str) -> str:
+    text = text.translate(_FULLWIDTH_DIGIT_MAP)
+    for ch in _DASH_VARIANTS:
+        text = text.replace(ch, "-")
+    return text
+
+
 def _ocr_header_text(content: bytes) -> str:
     """Like _ocr_page_text, but for a _crop_top_strip() header crop specifically - see
     _get_header_ocr_engine() for why this uses a separate, faster-tuned engine."""
     img = Image.open(io.BytesIO(content)).convert("RGB")
     result, _ = _get_header_ocr_engine()(np.array(img))
-    return "\n".join(line[1] for line in result) if result else ""
+    return _normalize_ocr_text("\n".join(line[1] for line in result)) if result else ""
 
 
 # Appended to EXTRACTION_PROMPT when the caller already knows which section(s) a batch
