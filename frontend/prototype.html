@@ -592,7 +592,8 @@
       </div>
       <div id="pd-sop-summary" style="margin-bottom:16px"></div>
       <div class="tab-bar">
-        <button class="tab-btn" data-tab="landowners">地主</button>
+        <button class="tab-btn" data-tab="landowners">土地登記</button>
+        <button class="tab-btn" data-tab="buildings">建物登記</button>
         <button class="tab-btn" data-tab="contacts">聯絡紀錄</button>
         <button class="tab-btn" data-tab="documents">文件</button>
         <button class="tab-btn" data-tab="encumbrances">他項權利部</button>
@@ -1784,7 +1785,7 @@ async function openProject(id) {
     btn.classList.toggle("active", btn.dataset.tab === "landowners");
   });
   state.activeTab = "landowners";
-  await Promise.all([renderTab("landowners"), renderSopSummary()]);
+  await Promise.all([renderTab(state.activeTab), renderSopSummary()]);
 }
 
 function renderProjectHeader(p) {
@@ -1807,7 +1808,8 @@ async function renderTab(tab) {
   const el = document.getElementById("tab-content");
   el.innerHTML = `<div class="empty-state">載入中...</div>`;
   const renderers = {
-    landowners: renderLandownersTab,
+    landowners: (el) => renderLandownersTypeTab(el, "land"),
+    buildings: (el) => renderLandownersTypeTab(el, "building"),
     contacts: renderContactsTab,
     documents: renderDocumentsTab,
     encumbrances: renderEncumbrancesTab,
@@ -1820,21 +1822,30 @@ async function renderTab(tab) {
   }
 }
 
-/* ================= Tab: Landowners ================= */
+/* ================= Tabs: Land registry / Building registry ================= */
 
-async function renderLandownersTab(el) {
+// The 地主清冊 UI used to be one combined tab (regardless of whether a landowner had
+// land records, building records, or both) - now split into two: 「土地登記」 only lists
+// owners with at least one land record, 「建物登記」 only lists owners with at least one
+// building record. Same underlying landowner CRUD (name/phone/contact status are
+// landowner-level, not land/building-specific) and detail expansion either way - just
+// which owners show up in the top-level list, and which "+ 匯入/新增" shortcut is on
+// the toolbar, differ by type.
+async function renderLandownersTypeTab(el, type) {
   const pid = state.currentProjectId;
-  const landowners = await api(`/projects/${pid}/landowners`);
-  state.projectCache[pid].landowners = landowners;
+  const allLandowners = await api(`/projects/${pid}/landowners`);
+  state.projectCache[pid].landowners = allLandowners;
+
+  const isLand = type === "land";
+  const landowners = allLandowners.filter((o) => (isLand ? o.land_records : o.building_records).length > 0);
 
   el.innerHTML = `
     <div class="section-toolbar">
-      <h3>地主清冊 (${landowners.length})</h3>
+      <h3>${isLand ? "土地登記清冊" : "建物登記清冊"} (${landowners.length})</h3>
       ${
         isEditor()
           ? `<div style="display:flex;gap:8px">
-              <button class="btn-secondary btn-sm" id="scan-title-deed-btn">土地登記匯入</button>
-              <button class="btn-secondary btn-sm" id="scan-building-title-deed-btn">建物登記匯入</button>
+              <button class="btn-secondary btn-sm" id="scan-title-deed-btn">${isLand ? "土地登記匯入" : "建物登記匯入"}</button>
               <button class="btn-primary btn-sm" id="add-landowner-btn">+ 新增地主</button>
             </div>`
           : ""
@@ -1843,7 +1854,7 @@ async function renderLandownersTab(el) {
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>姓名</th><th>身分證字號</th><th>電話</th><th>聯絡狀態</th><th>代表人</th><th>土地/建物</th>
+          <th>姓名</th><th>身分證字號</th><th>電話</th><th>聯絡狀態</th><th>代表人</th><th>${isLand ? "土地" : "建物"}</th>
           ${isEditor() ? "<th>操作</th>" : ""}
         </tr></thead>
         <tbody>
@@ -1856,7 +1867,7 @@ async function renderLandownersTab(el) {
               <td>${escapeHtml(o.phone) || "-"}</td>
               <td><span class="contact-status-badge cs-${o.contact_status}">${CONTACT_STATUS_LABEL[o.contact_status]}</span></td>
               <td>${o.is_representative ? "是" : "-"}</td>
-              <td>${o.land_records.length} 筆土地 / ${o.building_records.length} 筆建物
+              <td>${(isLand ? o.land_records : o.building_records).length} 筆
                 <div><button class="btn-link btn-sm" data-detail="${o.id}">查看明細</button></div>
               </td>
               ${
@@ -1945,7 +1956,7 @@ async function renderLandownersTab(el) {
   `;
 
   if (!landowners.length) {
-    el.querySelector(".table-wrap").outerHTML = `<div class="empty-state">尚無地主資料</div>`;
+    el.querySelector(".table-wrap").outerHTML = `<div class="empty-state">${isLand ? "尚無土地登記資料" : "尚無建物登記資料"}</div>`;
   }
 
   el.querySelectorAll("[data-detail]").forEach((btn) => {
@@ -1962,9 +1973,7 @@ async function renderLandownersTab(el) {
   const addBtn = document.getElementById("add-landowner-btn");
   if (addBtn) addBtn.addEventListener("click", openAddLandownerModal);
   const scanBtn = document.getElementById("scan-title-deed-btn");
-  if (scanBtn) scanBtn.addEventListener("click", openTitleDeedWizard);
-  const scanBuildingBtn = document.getElementById("scan-building-title-deed-btn");
-  if (scanBuildingBtn) scanBuildingBtn.addEventListener("click", openBuildingTitleDeedWizard);
+  if (scanBtn) scanBtn.addEventListener("click", isLand ? openTitleDeedWizard : openBuildingTitleDeedWizard);
 
   el.querySelectorAll("[data-add-land]").forEach((btn) => {
     btn.addEventListener("click", () => openAddLandRecordModal(Number(btn.dataset.addLand)));
@@ -2154,7 +2163,7 @@ function openAddLandownerModal() {
       await api(`/projects/${state.currentProjectId}/landowners`, { method: "POST", body: payload });
       closeModal();
       toast("地主已新增", "success");
-      renderTab("landowners");
+      renderTab(state.activeTab);
     } catch (err) {}
   });
 }
@@ -2196,7 +2205,7 @@ function openEditLandownerModal(landownerId) {
       await api(`/projects/${state.currentProjectId}/landowners/${landownerId}`, { method: "PATCH", body: payload });
       closeModal();
       toast("已更新", "success");
-      renderTab("landowners");
+      renderTab(state.activeTab);
     } catch (err) {}
   });
 }
@@ -2206,7 +2215,7 @@ async function deleteLandowner(id) {
   try {
     await api(`/projects/${state.currentProjectId}/landowners/${id}`, { method: "DELETE" });
     toast("已刪除", "success");
-    renderTab("landowners");
+    renderTab(state.activeTab);
   } catch (err) {}
 }
 
@@ -2261,7 +2270,7 @@ function openAddLandRecordModal(landownerId) {
       });
       closeModal();
       toast("土地資料已新增", "success");
-      renderTab("landowners");
+      renderTab(state.activeTab);
     } catch (err) {}
   });
 }
@@ -2286,7 +2295,7 @@ function openEditLandRecordModal(landownerId, record) {
       });
       closeModal();
       toast("已更新", "success");
-      renderTab("landowners");
+      renderTab(state.activeTab);
     } catch (err) {}
   });
 }
@@ -2296,7 +2305,7 @@ async function deleteLandRecord(landownerId, recordId) {
   try {
     await api(`/projects/${state.currentProjectId}/landowners/${landownerId}/land-records/${recordId}`, { method: "DELETE" });
     toast("已刪除", "success");
-    renderTab("landowners");
+    renderTab(state.activeTab);
   } catch (err) {}
 }
 
@@ -2357,7 +2366,7 @@ function openAddBuildingRecordModal(landownerId) {
       });
       closeModal();
       toast("建物資料已新增", "success");
-      renderTab("landowners");
+      renderTab(state.activeTab);
     } catch (err) {}
   });
 }
@@ -2382,7 +2391,7 @@ function openEditBuildingRecordModal(landownerId, record) {
       });
       closeModal();
       toast("已更新", "success");
-      renderTab("landowners");
+      renderTab(state.activeTab);
     } catch (err) {}
   });
 }
@@ -2392,7 +2401,7 @@ async function deleteBuildingRecord(landownerId, recordId) {
   try {
     await api(`/projects/${state.currentProjectId}/landowners/${landownerId}/building-records/${recordId}`, { method: "DELETE" });
     toast("已刪除", "success");
-    renderTab("landowners");
+    renderTab(state.activeTab);
   } catch (err) {}
 }
 
@@ -3573,7 +3582,7 @@ async function submitTitleDeedWizard() {
     closeModal();
     toast("謄本資料已匯入", "success");
     titleDeedWizard = null;
-    await renderTab("landowners");
+    await renderTab(state.activeTab);
     // Building records link back to a land record by matching parcel_number (see
     // landRecordIdByParcelOwner above) - offering to continue straight into a
     // building-deed upload right after land data lands makes that linking "just work"
