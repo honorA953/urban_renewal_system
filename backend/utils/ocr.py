@@ -463,13 +463,18 @@ def _ocr_page_text(content: bytes) -> str:
 # samples, which matters a lot on this app's underpowered NAS deployment. Kept as a
 # separate engine instance (not just different call-time args) because RapidOCR bakes
 # det_limit_side_len into the detector at construction time, not overridable per call.
+#
+# det_limit_side_len was 320, dropped to 256 alongside TOP_STRIP_MAX_WIDTH above for the
+# same reason - a real NAS run measured ~5s/page for this "supposedly cheap" pass, and
+# detection cost scales with this value. 256 is RapidOCR's own commonly-used lower
+# preset for short/simple text lines; still well above what large printed digits need.
 _HEADER_OCR_ENGINE: RapidOCR | None = None
 
 
 def _get_header_ocr_engine() -> RapidOCR:
     global _HEADER_OCR_ENGINE
     if _HEADER_OCR_ENGINE is None:
-        _HEADER_OCR_ENGINE = RapidOCR(det_limit_side_len=320, use_cls=False)
+        _HEADER_OCR_ENGINE = RapidOCR(det_limit_side_len=256, use_cls=False)
     return _HEADER_OCR_ENGINE
 
 
@@ -773,7 +778,14 @@ TOP_STRIP_CROP_FRACTION = 0.15
 # smaller input measurably speeds up RapidOCR's detection pass (fewer pixels to scan),
 # which matters a lot on underpowered hardware like the NAS this batch step often runs
 # on (a dual-core Celeron, much weaker than a dev machine).
-TOP_STRIP_MAX_WIDTH = 900
+#
+# Was 900, dropped to 640 after a real NAS run logged this header-crop OCR pass taking
+# ~5s/page (149s for 27 pages) - detection compute scales roughly with pixel count, so
+# a further ~30% smaller input is a meaningful chunk of that. Still comfortably above
+# what large-clear-print title/頁次 text needs to stay legible; if pages ever come in
+# narrower than this (e.g. a smaller original scan), the resize in _crop_top_strip only
+# ever shrinks, so this is a ceiling, not a forced upscale.
+TOP_STRIP_MAX_WIDTH = 640
 
 
 def _crop_top_strip(content: bytes, fraction: float = TOP_STRIP_CROP_FRACTION) -> bytes:
