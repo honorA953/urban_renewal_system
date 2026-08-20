@@ -3,6 +3,7 @@ import io
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import fitz
 import httpx
@@ -400,6 +401,15 @@ def _merge_extractions(chunk_results: list[dict]) -> dict:
     return {"land_parcels": land_parcels, "encumbrances": encumbrances, "buildings": buildings}
 
 
+# Header-strip OCR (_ocr_header_text, used by detect_case_groups/detect_building_parcel_numbers)
+# is cheap enough per page that the per-page loop was previously the bottleneck for
+# batch import, not any single OCR call - onnxruntime's InferenceSession.run releases
+# the GIL during inference and is safe to call concurrently from multiple threads on
+# the same session, so running these header OCR calls in a small thread pool lets
+# multi-page/multi-group batches use more than one CPU core instead of OCR'ing pages
+# one at a time. Capped at 4 to stay reasonable on the underpowered NAS deployment.
+_HEADER_OCR_WORKERS = 4
+
 # Loading RapidOCR's models takes a couple seconds - doing that once per process and
 # reusing the engine avoids paying that cost on every single page.
 _OCR_ENGINE: RapidOCR | None = None
@@ -471,6 +481,9 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type
     # skimming a downsized page image. The model's job here is purely to organize and
     # sanity-check already-recognized text, not to also read characters off pixels.
     page_texts = [_ocr_page_text(content) for content, _ in files]
+    # TEMP DEBUG - remove once the missing-encumbrances extraction issue is diagnosed.
+    for i, t in enumerate(page_texts):
+        print(f"[_extract_title_deed_chunk] page {i + 1} OCR text:\n{t}\n", flush=True)
     pages_block = "\n\n".join(
         f"----- 第 {i + 1} 頁 OCR 文字 -----\n{text or '(本頁 OCR 沒有讀到文字)'}"
         for i, text in enumerate(page_texts)
@@ -538,11 +551,20 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type
             last_error = OcrError(f"無法解析 OpenAI 回傳的 JSON:{exc}")
             continue
 
-        return {
+        result = {
             "land_parcels": parsed.get("land_parcels") or [],
             "encumbrances": parsed.get("encumbrances") or [],
             "buildings": parsed.get("buildings") or [],
         }
+        # TEMP DEBUG - remove once the missing-encumbrances extraction issue is diagnosed.
+        print(
+            "[_extract_title_deed_chunk] model result: "
+            f"land_parcels={[(p.get('parcel_number'), len(p.get('encumbrances') or [])) for p in result['land_parcels']]} "
+            f"top_level_encumbrances={len(result['encumbrances'])} "
+            f"buildings={[b.get('building_number') for b in result['buildings']]}",
+            flush=True,
+        )
+        return result
 
     raise last_error
 
@@ -811,18 +833,24 @@ def detect_case_groups(pages: list[tuple[bytes, str | None]]) -> tuple[list[tupl
     if not pages:
         return [], None
 
-    entries: list[tuple[str, str, bool]] = []
-    failed_pages: list[int] = []
-    raw_texts: list[str] = []  # TEMP DEBUG
-    for i, (content, _mime_type) in enumerate(pages):
+    def _ocr_one_page(i: int, content: bytes) -> tuple[str, tuple[str, str, bool]]:
         try:
             text = _ocr_header_text(_crop_top_strip(content))
-            raw_texts.append(text)  # TEMP DEBUG
-            entries.append(_parse_case_header(text))
+            return text, _parse_case_header(text)
         except Exception as exc:
             print(f"[detect_case_groups] page {i + 1} OCR/parse failed: {exc}", flush=True)
-            raw_texts.append("")  # TEMP DEBUG
-            entries.append(("(偵測失敗)", "", True))
+            return "", ("(偵測失敗)", "", True)
+
+    with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(pages))) as pool:
+        page_results = list(pool.map(lambda args: _ocr_one_page(*args), enumerate(content for content, _mime_type in pages)))
+
+    raw_texts: list[str] = []  # TEMP DEBUG
+    entries: list[tuple[str, str, bool]] = []
+    failed_pages: list[int] = []
+    for i, (text, entry) in enumerate(page_results):
+        raw_texts.append(text)  # TEMP DEBUG
+        entries.append(entry)
+        if entry[0] == "(偵測失敗)":
             failed_pages.append(i + 1)
 
     grouped: list[tuple[int, str, str]] = []
@@ -885,13 +913,19 @@ def detect_building_parcel_numbers(pages: list[tuple[bytes, str | None]], first_
     """For each given page index (expected to be the first page of a detected 建號 group),
     locally OCRs a taller top crop and returns {index: 建物坐落地號} for whichever ones a
     地號-suffixed match was found on. No OpenAI call."""
-    result: dict[int, str] = {}
-    for i in first_page_indices:
+    def _ocr_one_group(i: int) -> tuple[int, str]:
         try:
             text = _ocr_header_text(_crop_top_strip(pages[i][0], fraction=BUILDING_BODY_CROP_FRACTION))
-            parcel_number = _find_building_parcel_number(text)
-            if parcel_number:
-                result[i] = parcel_number
+            return i, _find_building_parcel_number(text)
         except Exception as exc:
             print(f"[detect_building_parcel_numbers] page {i + 1} OCR/parse failed: {exc}", flush=True)
+            return i, ""
+
+    result: dict[int, str] = {}
+    if not first_page_indices:
+        return result
+    with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(first_page_indices))) as pool:
+        for i, parcel_number in pool.map(_ocr_one_group, first_page_indices):
+            if parcel_number:
+                result[i] = parcel_number
     return result
