@@ -1467,14 +1467,27 @@ async function runConfirmCaseSplit() {
       const meta = caseSplitWizard.groupMeta[g] || { name: `未命名案件${g}`, code: "", mode: "new", existingProjectId: "" };
       const groupPages = caseSplitWizard.pages.filter((p) => p.group === g);
       let project;
-      if (meta.mode === "existing" && meta.existingProjectId) {
+      // A previous click of this button may have already created/found this group's
+      // project before failing partway through a later group - createdProjectId marks
+      // that so a retry resumes instead of trying to create the same 案件 code again
+      // (which 409s with "project_code already exists" since it's already there).
+      if (meta.createdProjectId) {
+        project = await api(`/projects/${meta.createdProjectId}`);
+      } else if (meta.mode === "existing" && meta.existingProjectId) {
         project = await api(`/projects/${meta.existingProjectId}`);
+        meta.createdProjectId = project.id;
       } else {
         const code = (meta.code || "").trim() || (await suggestNextProjectCode());
-        project = await api("/projects", {
-          method: "POST",
-          body: { project_code: code, name: meta.name || code, district: "", address: "" },
-        });
+        try {
+          project = await api("/projects", {
+            method: "POST",
+            body: { project_code: code, name: meta.name || code, district: "", address: "" },
+          });
+        } catch (err) {
+          toast(`第 ${g} 組(代碼 ${code})建立失敗,前面已成功的組別不會重複建立,修正後可直接再按一次「確認建立」繼續`, "error");
+          throw err;
+        }
+        meta.createdProjectId = project.id;
       }
       // Save this group's source pages as a merged PDF document on the project right
       // away - otherwise they only exist in this browser tab's memory, and are lost if
