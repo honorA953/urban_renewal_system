@@ -1282,6 +1282,14 @@ async function runDetectCases() {
   }
   const btn = document.getElementById("case-split-detect-btn");
   btn.disabled = true;
+  const detectStartedAt = Date.now();
+  // No real per-page progress from the backend (it's one blocking request, not a
+  // pollable job) - a ticking elapsed-time counter at least tells the user it's still
+  // alive and roughly how long it's been running, instead of a static "偵測中..." that
+  // looks identical whether it's about to finish or actually stuck.
+  const tickTimer = setInterval(() => {
+    btn.textContent = `偵測中(已等待 ${Math.floor((Date.now() - detectStartedAt) / 1000)} 秒,頁數多可能需要數分鐘)...`;
+  }, 1000);
   btn.textContent = "偵測中(頁數多可能需要數分鐘)...";
   try {
     const fd = new FormData();
@@ -1326,6 +1334,8 @@ async function runDetectCases() {
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "偵測案件分組";
+  } finally {
+    clearInterval(tickTimer);
   }
 }
 
@@ -1620,6 +1630,12 @@ async function runDetectBuildingCases() {
   }
   const btn = document.getElementById("building-batch-detect-btn");
   btn.disabled = true;
+  const detectStartedAt = Date.now();
+  // Same elapsed-time ticker as runDetectCases() - there's no pollable job to show real
+  // per-page progress from, so this is just enough to tell the user it's still alive.
+  const tickTimer = setInterval(() => {
+    btn.textContent = `偵測比對中(已等待 ${Math.floor((Date.now() - detectStartedAt) / 1000)} 秒)...`;
+  }, 1000);
   btn.textContent = "偵測比對中...";
   try {
     const fd = new FormData();
@@ -1631,6 +1647,8 @@ async function runDetectBuildingCases() {
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "偵測建號並比對案件";
+  } finally {
+    clearInterval(tickTimer);
   }
 }
 
