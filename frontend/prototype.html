@@ -3603,6 +3603,13 @@ function offerBuildingImportFollowUp() {
 
 const DUAL_GATE_STAGES = [4, 8, 9];
 
+// Breaks a stage label like "同意度>80%(雙門檻)" onto two lines before the "(" - these
+// labels are short but dense (a threshold plus a qualifier in parens), and read better
+// wrapped than crammed onto one line in the narrow stepper node / card heading.
+function formatStageLabelHtml(name) {
+  return escapeHtml(name).replace(/\(/g, "<br>(");
+}
+
 async function renderSopSummary() {
   const el = document.getElementById("pd-sop-summary");
   const pid = state.currentProjectId;
@@ -3623,7 +3630,7 @@ async function renderSopSummary() {
       const stage = sop.stages[key];
       const num = Number(key);
       const cls = stage.status === "completed" ? "completed" : stage.status === "force_closed" ? "force_closed" : num === sop.current_stage ? "current" : "";
-      return `<div class="sop-node ${cls}"><div class="line"></div><div class="circle">${key}</div><div class="label">${escapeHtml(stage.name.split(":")[1] || stage.name)}</div></div>`;
+      return `<div class="sop-node ${cls}"><div class="line"></div><div class="circle">${key}</div><div class="label">${formatStageLabelHtml(stage.name.split(":")[1] || stage.name)}</div></div>`;
     })
     .join("");
 
@@ -3636,7 +3643,7 @@ async function renderSopSummary() {
     const stageLabel = currentStage.name.split(":")[1] || currentStage.name;
     actionPanel = `
       <div class="card" style="padding:24px">
-        <div style="font-size:18px;font-weight:700;margin-bottom:14px">${escapeHtml(stageLabel)}</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:14px">${formatStageLabelHtml(stageLabel)}</div>
         ${isDualGate ? `<div id="consent-panel"></div>` : ""}
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
           ${
