@@ -916,7 +916,11 @@ def detect_building_parcel_numbers(pages: list[tuple[bytes, str | None]], first_
     def _ocr_one_group(i: int) -> tuple[int, str]:
         try:
             text = _ocr_header_text(_crop_top_strip(pages[i][0], fraction=BUILDING_BODY_CROP_FRACTION))
-            return i, _find_building_parcel_number(text)
+            parcel_number = _find_building_parcel_number(text)
+            # TEMP DEBUG - remove once the missing-建物坐落地號 detection issue is diagnosed.
+            print(f"[detect_building_parcel_numbers] page {i + 1}: parcel_number={parcel_number!r}", flush=True)
+            print(f"    raw_ocr={text!r}", flush=True)
+            return i, parcel_number
         except Exception as exc:
             print(f"[detect_building_parcel_numbers] page {i + 1} OCR/parse failed: {exc}", flush=True)
             return i, ""
