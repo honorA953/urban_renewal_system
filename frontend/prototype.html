@@ -1676,25 +1676,52 @@ async function runConfirmBuildingBatchImport() {
   btn.disabled = true;
   const landownerCacheByProject = new Map();
 
-  try {
-    for (let i = 0; i < groups.length; i++) {
+  // Full AI extraction was deferred from the detect step (which only ran local OCR) to
+  // here, so it only runs for groups the user actually confirmed importing. Each
+  // group's extraction is an independent OpenAI call, so running them one at a time
+  // made total wait time scale linearly with group count (a 30-group batch waiting on
+  // 30 sequential round trips). Fire them off with a small concurrency cap instead -
+  // capped (not all at once) to stay within OpenAI's per-minute rate limit - and only
+  // fall back to the sequential archive/import loop once every group's extraction has
+  // resolved, so the DB-writing half of the loop (which does need to run in order per
+  // project for the landowner cache below) is unaffected.
+  const BUILDING_EXTRACT_CONCURRENCY = 4;
+  const extractionResults = new Array(groups.length);
+  let extractedCount = 0;
+  btn.textContent = `辨識中(0/${groups.length})...`;
+  let nextGroupIndex = 0;
+  async function extractWorker() {
+    while (nextGroupIndex < groups.length) {
+      const i = nextGroupIndex++;
       const g = groups[i];
-      btn.textContent = `辨識中(第 ${i + 1}/${groups.length} 筆)...`;
-      const pid = Number(g.selectedProjectId);
-
-      // Full AI extraction was deferred from the detect step (which only ran local OCR)
-      // to here, so it only runs for groups the user actually confirmed importing.
-      let b = g.building || {};
       try {
         const fd0 = new FormData();
         g.pages.forEach((p, j) => fd0.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${j + 1}.jpg`));
-        const extracted = await api("/ocr/extract-building-group", { method: "POST", body: fd0, isForm: true });
-        if (extracted.warning) toast(`第${g.group}組:${extracted.warning}`, "error");
-        if (extracted.building) b = extracted.building;
+        extractionResults[i] = { ok: true, extracted: await api("/ocr/extract-building-group", { method: "POST", body: fd0, isForm: true }) };
       } catch (err) {
+        extractionResults[i] = { ok: false };
+      }
+      extractedCount++;
+      btn.textContent = `辨識中(${extractedCount}/${groups.length})...`;
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(BUILDING_EXTRACT_CONCURRENCY, groups.length) }, extractWorker)
+  );
+
+  try {
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      const pid = Number(g.selectedProjectId);
+
+      let b = g.building || {};
+      const result = extractionResults[i];
+      if (!result.ok) {
         toast(`建號${b.building_number || g.group}辨識失敗,已略過`, "error");
         continue;
       }
+      if (result.extracted.warning) toast(`第${g.group}組:${result.extracted.warning}`, "error");
+      if (result.extracted.building) b = result.extracted.building;
       btn.textContent = `匯入中(第 ${i + 1}/${groups.length} 筆)...`;
 
       // Archive this group's original pages as one merged PDF, same as the 地號 batch
