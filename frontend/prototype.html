@@ -1337,6 +1337,25 @@ async function renderCaseSplitReview() {
 
   const groupNumbers = [...new Set(caseSplitWizard.pages.map((p) => p.group))].sort((a, b) => a - b);
 
+  // Auto-match a group's suggested code against an existing project's project_code,
+  // same as the building batch import already does - without this, a group whose
+  // detected 地號 happens to already have a project (re-importing the same 地號, or
+  // this batch containing a case that was created some other way) stays defaulted to
+  // "建立新案件" and 409s on confirm instead of quietly offering to file into it. Only
+  // touches groups still on their untouched "new" default so it doesn't override a
+  // choice the user already made.
+  groupNumbers.forEach((g) => {
+    const meta = caseSplitWizard.groupMeta[g];
+    if (!meta || meta.mode !== "new" || meta.existingProjectId) return;
+    const code = (meta.code || "").trim();
+    if (!code) return;
+    const matched = existingProjects.find((p) => p.project_code === code);
+    if (matched) {
+      meta.mode = "existing";
+      meta.existingProjectId = matched.id;
+    }
+  });
+
   openModal(
     "批次匯入(自動分案件)· 審核分組",
     `
