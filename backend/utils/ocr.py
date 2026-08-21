@@ -37,6 +37,26 @@ def _to_traditional(value):
         return {key: _to_traditional(item) for key, item in value.items()}
     return value
 
+
+def _fix_ownership_fractions(result: dict) -> dict:
+    """A single owner's 權利範圍 (ownership share) can never exceed the whole - numerator
+    must be <= denominator. The prompt below already asks the model to self-correct a
+    reversed "X分之Y" fraction, but that's a soft instruction; this is a deterministic
+    backstop (same idea as _to_traditional above) that swaps the two whenever the
+    extracted numerator is larger, so a reversed fraction can't silently produce a >100%
+    share and blow up the DB's ownership_share_pct column."""
+    for owner in [o for parcel in result.get("land_parcels", []) for o in parcel.get("owners", [])]:
+        num, den = owner.get("ownership_numerator"), owner.get("ownership_denominator")
+        if isinstance(num, int) and isinstance(den, int) and den and num > den:
+            owner["ownership_numerator"], owner["ownership_denominator"] = den, num
+    for building in result.get("buildings", []):
+        for owner in building.get("owners", []):
+            num, den = owner.get("ownership_numerator"), owner.get("ownership_denominator")
+            if isinstance(num, int) and isinstance(den, int) and den and num > den:
+                owner["ownership_numerator"], owner["ownership_denominator"] = den, num
+    return result
+
+
 EXTRACTION_PROMPT = """你是台灣地政士助理。以下會依序提供同一份謄本文件連續頁面、經本地 OCR 引擎辨識出的原始文字\
 內容(不是圖片)。這份文件可能是「單一地號/建號」的謄本,也可能是「批次謄本」——同一份文件裡連續印著好幾筆不同地號、\
 好幾筆不同建號(例如信義區祥和段三小段0242-0000、0250-0000...等多筆地號依序印在同一份 PDF 裡),每筆地號/建號底下\
@@ -101,6 +121,10 @@ OCR 引擎的辨識結果偶爾會混入簡體字或簡體/繁體之間的中間
 絕對不要跟「歷次取得權利範圍:」欄位搞混——後者是這位所有權人「以前某一次取得時」的歷史持分紀錄(同一人底下\
 常常會有好幾筆不同數字的歷次取得權利範圍,分別對應不同次取得的時間點),不是現在的持分,不可以拿來當作\
 ownership_numerator/ownership_denominator。
+- 【權利範圍分子不可能大於分母】「權利範圍:」代表這位所有權人在這筆地號/建號裡「占整體的多少比例」,單一所有\
+權人的持分不可能超過整體,所以 ownership_numerator 一定要小於等於 ownership_denominator——如果讀出來的結果\
+分子大於分母(例如「12/1」這種算出來超過 100% 的組合),幾乎可以確定是「X分之Y」的 X、Y 兩個數字讀反了\
+(分子分母對調),請直接自行對調成分子小於分母的合理版本再填入欄位,不要照抄出分子大於分母的不合理結果。
 - 他項權利部(抵押權等)緊接在它所屬的那筆地號/建號的所有權部之後印出、在下一筆地號/建號開始之前——如果一筆他項\
 權利明確只對應到單一一筆地號(對應地號欄位只寫一個地號、且是這頁前後在講的那一筆),請直接收錄進那筆 land_parcels \
 項目自己的 encumbrances 陣列裡,不要另外放到最外層。只有當一筆他項權利明確橫跨多筆地號/建號、或原文寫「全部」\
@@ -733,11 +757,11 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type
             last_error = OcrError(f"無法解析 OpenAI 回傳的 JSON:{exc}")
             continue
 
-        result = _to_traditional({
+        result = _fix_ownership_fractions(_to_traditional({
             "land_parcels": parsed.get("land_parcels") or [],
             "encumbrances": parsed.get("encumbrances") or [],
             "buildings": parsed.get("buildings") or [],
-        })
+        }))
         # TEMP DEBUG - remove once the missing-encumbrances extraction issue is diagnosed.
         print(
             "[_extract_title_deed_chunk] model result: "
