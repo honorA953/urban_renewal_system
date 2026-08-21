@@ -3523,6 +3523,20 @@ function renderBuildingOwnersSubStep(idx) {
 
 function renderWizardStepConfirm() {
   const d = titleDeedWizard.data;
+  // A parcel/building's owners collectively own the whole thing - their ownership shares
+  // should sum to ~100%. A misread numerator/denominator (a genuine OCR digit error, not
+  // the numerator>denominator reversal already auto-corrected server-side) throws that
+  // sum off without being individually implausible, so it can't be caught per-owner -
+  // this is the cheapest signal that flags exactly the records worth manually checking
+  // against the original scan, instead of requiring every single one to be checked.
+  const shareSum = (owners) =>
+    owners.reduce((sum, o) => sum + (Number(o.ownership_numerator) || 0) / (Number(o.ownership_denominator) || 1), 0);
+  const shareSumWarningHtml = (owners) => {
+    if (!owners.length) return "";
+    const sum = shareSum(owners);
+    if (Math.abs(sum - 1) <= 0.05) return "";
+    return `<div class="wizard-confirm-card-row" style="color:var(--danger)">⚠ 權利範圍加總為 ${(sum * 100).toFixed(1)}%,明顯偏離 100%,請重點核對這幾位所有權人的權利範圍</div>`;
+  };
   const ownerChipsHtml = (owners) =>
     `<div class="wizard-confirm-chip-list">${owners
       .map((o) => `<span class="wizard-confirm-chip">${escapeHtml(o.owner_name) || "-"}(${o.ownership_numerator}/${o.ownership_denominator})</span>`)
@@ -3534,6 +3548,7 @@ function renderWizardStepConfirm() {
         <span class="wizard-confirm-card-label">所有權人</span>
         ${ownerChipsHtml(p.owners)}
       </div>
+      ${shareSumWarningHtml(p.owners)}
       ${
         (p.encumbrances || []).length
           ? `<div class="wizard-confirm-card-row">
@@ -3557,6 +3572,7 @@ function renderWizardStepConfirm() {
             <span class="wizard-confirm-card-label">所有權人</span>
             ${ownerChipsHtml(b.owners)}
           </div>
+          ${shareSumWarningHtml(b.owners)}
         </div>`
         )
         .join("")}`
