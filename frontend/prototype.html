@@ -316,6 +316,13 @@
   .project-card { cursor: pointer; display: flex; flex-direction: column; gap: 12px; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
   .project-card:hover { border-color: var(--brand); box-shadow: var(--shadow-hover); transform: translateY(-3px); }
   .project-card-top { display: flex; align-items: flex-start; gap: 10px; }
+  .project-card-add {
+    align-items: center; justify-content: center; flex-direction: row; gap: 8px;
+    border: 1.5px dashed var(--border); background: transparent; color: var(--text-muted);
+    min-height: 100px; font-weight: 600;
+  }
+  .project-card-add:hover { border-color: var(--brand); color: var(--brand); background: var(--bg); }
+  .project-card-add-icon { font-size: 20px; line-height: 1; }
   .project-card h3 { margin: 0; font-size: 16.5px; font-weight: 700; line-height: 1.35; }
   .project-select-checkbox {
     width: 19px; height: 19px; flex-shrink: 0; margin-top: 2px;
@@ -990,8 +997,16 @@ async function loadDashboard() {
     return;
   }
 
+  const addProjectTileHtml = isEditor()
+    ? `<div class="card project-card project-card-add" id="add-project-tile">
+        <span class="project-card-add-icon">+</span>
+        <span>新增專案</span>
+      </div>`
+    : "";
+
   if (!projects.length) {
-    grid.innerHTML = `<div class="empty-state">目前沒有可查看的案件</div>`;
+    grid.innerHTML = addProjectTileHtml || `<div class="empty-state">目前沒有可查看的案件</div>`;
+    document.getElementById("add-project-tile")?.addEventListener("click", openNewProjectModal);
     return;
   }
 
@@ -1011,7 +1026,7 @@ async function loadDashboard() {
 
   enriched.forEach(({ p }) => (dashboardProjectsById[p.id] = p));
 
-  grid.innerHTML = enriched
+  grid.innerHTML = addProjectTileHtml + enriched
     .map(({ p, ratio, alerts }) => {
       const pct = Math.round((p.current_stage / 9) * 100);
       const gateBadge =
@@ -1047,9 +1062,10 @@ async function loadDashboard() {
     })
     .join("");
 
-  grid.querySelectorAll(".project-card").forEach((card) => {
+  grid.querySelectorAll(".project-card[data-project-id]").forEach((card) => {
     card.addEventListener("click", () => openProject(Number(card.dataset.projectId)));
   });
+  document.getElementById("add-project-tile")?.addEventListener("click", openNewProjectModal);
 
   grid.querySelectorAll("[data-delete-project]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -1194,7 +1210,9 @@ async function suggestNextProjectCode() {
   return `${year}-${String(maxSeq + 1).padStart(3, "0")}`;
 }
 
-document.getElementById("new-project-btn").addEventListener("click", async () => {
+document.getElementById("new-project-btn").addEventListener("click", openNewProjectModal);
+
+async function openNewProjectModal() {
   const suggestedCode = await suggestNextProjectCode();
   openModal(
     "新增案件",
@@ -1244,7 +1262,7 @@ document.getElementById("new-project-btn").addEventListener("click", async () =>
       }
     } catch (err) {}
   });
-});
+}
 
 /* ================= Batch import: split a mixed batch into 都更案件 first ================= */
 
