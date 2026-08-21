@@ -3532,7 +3532,19 @@ function renderWizardStepConfirm() {
   document.getElementById("wizard-confirm-btn").addEventListener("click", submitTitleDeedWizard);
 }
 
-async function findOrCreateLandownerByOwner(owner, createdCache) {
+// matchRecordType ("land" | "building") restricts which existing landowners this is
+// allowed to match/reuse against - only ones that already have at least one record of
+// that same type. Without this, importing a building deed would happily match (and
+// silently merge into) a landowner who so far only has land records, purely because
+// the name happened to match - surprising when the two deeds are unrelated imports the
+// user never intended to link. Matching only within the same record type still lets a
+// second import of the *same* type (e.g. re-running the building wizard) correctly
+// dedupe against a building owner it already created, without ever reaching across into
+// the other type's owners. Cross-references some of the same real person may still
+// exist across imports, but that's now something the user does explicitly (e.g. editing
+// a landowner to add a land_record_id link on a building_record) rather than an
+// automatic side effect of the wizard.
+async function findOrCreateLandownerByOwner(owner, createdCache, matchRecordType) {
   const pid = state.currentProjectId;
   const idKey = (owner.id_number || "").trim();
   const nameKey = owner.owner_name.trim();
@@ -3540,9 +3552,12 @@ async function findOrCreateLandownerByOwner(owner, createdCache) {
   if (createdCache.has(cacheKey)) return createdCache.get(cacheKey);
 
   const existingList = state.projectCache[pid].landowners;
+  const candidates = matchRecordType
+    ? existingList.filter((o) => (matchRecordType === "land" ? o.land_records : o.building_records || []).length > 0)
+    : existingList;
   let existing = null;
-  if (idKey) existing = existingList.find((o) => o.id_number && o.id_number === idKey);
-  if (!existing) existing = existingList.find((o) => o.name === nameKey);
+  if (idKey) existing = candidates.find((o) => o.id_number && o.id_number === idKey);
+  if (!existing) existing = candidates.find((o) => o.name === nameKey);
 
   let landownerId;
   if (existing) {
@@ -3608,7 +3623,7 @@ async function submitTitleDeedWizard() {
     for (const p of d.parcels) {
       for (const owner of p.owners) {
         if (!owner.owner_name) continue;
-        const landownerId = await findOrCreateLandownerByOwner(owner, createdCache);
+        const landownerId = await findOrCreateLandownerByOwner(owner, createdCache, "land");
         const created = await api(`/projects/${pid}/landowners/${landownerId}/land-records`, {
           method: "POST",
           body: {
@@ -3642,7 +3657,7 @@ async function submitTitleDeedWizard() {
       const floorAreaSqm = Number(b.total_area_sqm) || Number(b.floor_area_sqm) || 0;
       for (const owner of b.owners) {
         if (!owner.owner_name) continue;
-        const landownerId = await findOrCreateLandownerByOwner(owner, createdCache);
+        const landownerId = await findOrCreateLandownerByOwner(owner, createdCache, "building");
         await api(`/projects/${pid}/landowners/${landownerId}/building-records`, {
           method: "POST",
           body: {
