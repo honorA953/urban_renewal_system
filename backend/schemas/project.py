@@ -7,6 +7,7 @@ class ProjectCreate(BaseModel):
     project_code: str = Field(min_length=1, max_length=50)
     name: str = Field(min_length=1, max_length=255)
     address: str | None = None
+    city: str | None = None
     district: str | None = None
     description: str | None = None
 
@@ -14,6 +15,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = None
     address: str | None = None
+    city: str | None = None
     district: str | None = None
     status: str | None = Field(default=None, pattern="^(active|closed|suspended)$")
     description: str | None = None
@@ -24,6 +26,7 @@ class ProjectRead(BaseModel):
     project_code: str
     name: str
     address: str | None = None
+    city: str | None = None
     district: str | None = None
     status: str
     current_stage: int

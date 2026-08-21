@@ -42,6 +42,7 @@ CREATE TABLE projects (
     project_code VARCHAR(50) NOT NULL UNIQUE,
     name VARCHAR(255) NOT NULL,
     address VARCHAR(255),
+    city VARCHAR(50),
     district VARCHAR(100),
     status ENUM('active','closed','suspended') NOT NULL DEFAULT 'active',
     current_stage TINYINT NOT NULL DEFAULT 0,

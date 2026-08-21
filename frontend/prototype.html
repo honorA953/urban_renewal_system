@@ -794,6 +794,12 @@ function fmtMoney(n) {
 const CONTACT_STATUS_LABEL = { not_contacted: "未聯絡", contacted: "已聯絡", declined: "婉拒", agreed: "同意" };
 const CONSENT_STATUS_LABEL = { pending: "待確認", agreed: "同意", opposed: "反對" };
 const PROJECT_STATUS_LABEL = { active: "進行中", closed: "已結案", suspended: "暫停" };
+const TAIWAN_CITIES = [
+  "臺北市", "新北市", "桃園市", "臺中市", "臺南市", "高雄市",
+  "基隆市", "新竹市", "新竹縣", "苗栗縣", "彰化縣", "南投縣",
+  "雲林縣", "嘉義市", "嘉義縣", "屏東縣", "宜蘭縣", "花蓮縣",
+  "臺東縣", "澎湖縣", "金門縣", "連江縣",
+];
 const DOC_TYPE_LABEL = {
   property_register: "土地登記謄本", consent_form: "同意書", briefing_material: "說明會資料",
   contract: "合約", photo: "照片", other: "其他",
@@ -1024,7 +1030,7 @@ async function loadDashboard() {
             <h3>${escapeHtml(p.name)}</h3>
           </div>
           <div class="card-meta-row">
-            <span class="project-code">${escapeHtml(p.project_code)}${p.district ? " · " + escapeHtml(p.district) : ""}</span>
+            <span class="project-code">${escapeHtml(p.project_code)}${p.city || p.district ? " · " + escapeHtml([p.city, p.district].filter(Boolean).join("")) : ""}</span>
             <span class="status-badge status-${p.status}">${PROJECT_STATUS_LABEL[p.status] || p.status}</span>
           </div>
           <div>
@@ -1195,13 +1201,20 @@ document.getElementById("new-project-btn").addEventListener("click", async () =>
     `
     <form id="project-form">
       <div class="field-row">
+        <div class="field">
+          <label>縣市</label>
+          <select name="city">
+            <option value="">請選擇</option>
+            ${TAIWAN_CITIES.map((c) => `<option value="${c}">${c}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>行政區</label><input name="district"></div>
+      </div>
+      <div class="field-row">
         <div class="field"><label>案件代碼</label><input name="project_code" value="${escapeHtml(suggestedCode)}" required></div>
         <div class="field"><label>案件名稱</label><input name="name" required></div>
       </div>
-      <div class="field-row">
-        <div class="field"><label>行政區</label><input name="district"></div>
-        <div class="field"><label>地址</label><input name="address"></div>
-      </div>
+      <div class="field"><label>地址</label><input name="address"></div>
       <div class="field"><label>備註</label><textarea name="description" rows="3"></textarea></div>
       <div class="field">
         <label>謄本掃描檔(選填)</label>

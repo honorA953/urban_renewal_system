@@ -13,6 +13,7 @@ class Project(Base):
     project_code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(50), nullable=True)
     district: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="active")
     current_stage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
