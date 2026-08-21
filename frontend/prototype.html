@@ -2724,12 +2724,15 @@ async function runTitleDeedOcr() {
   }
   const btn = document.getElementById("wizard-start-ocr-btn");
   btn.disabled = true;
-  // Uses the slower but more accurate OCR engine by default here (see high_accuracy on
-  // /ocr/title-deed) - this wizard is scoped to one project's own deed upload (a
-  // handful of pages), not the dashboard's dozens-of-pages batch import, so the extra
-  // ~70-80s/page is an acceptable trade for not needing a manual "重新上傳...並辨識"
-  // pass afterward to catch what the fast engine misread.
-  btn.textContent = "辨識中...(使用較慢但較準確的引擎,請稍候，勿關閉視窗)";
+  // Back to the fast default engine here (was briefly high_accuracy-by-default, but
+  // that meant every page cost ~70-80s regardless of whether it was actually needed -
+  // felt slow in practice for a step run this often). Character-level misreads (壹/臺,
+  // 羲/義 etc.) are now instead caught by EXTRACTION_PROMPT explicitly asking the model
+  // to cross-check/correct them using the other owners' addresses on the same document
+  // - cheaper and faster than swapping the whole OCR engine, since the OpenAI call
+  // happens either way. The slow engine is still available via "重新上傳這一筆...並
+  // 辨識" for a specific record the user already suspects is wrong.
+  btn.textContent = "辨識中...(請稍候，勿關閉視窗)";
   const progress = startFakeProgress("wizard-ocr-progress-wrap", "wizard-ocr-progress-fill", "wizard-ocr-progress-label");
   try {
     const fd = new FormData();
@@ -2738,7 +2741,6 @@ async function runTitleDeedOcr() {
       fd.append("source_document_ids", f.sourceDocumentId ? String(f.sourceDocumentId) : "");
     });
     fd.append("record_type", titleDeedWizard.recordType);
-    fd.append("high_accuracy", "true");
     const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
 
     if (result.job.status !== "completed") {
@@ -2872,7 +2874,6 @@ async function runGroupedTitleDeedOcr() {
       const fd = new FormData();
       groupPages.forEach((p, i) => fd.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${p.page_number}.png`));
       fd.append("record_type", titleDeedWizard.recordType);
-      fd.append("high_accuracy", "true"); // same reasoning as runTitleDeedOcr() - this is still the single-project wizard, not the dashboard batch import
 
       try {
         const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
