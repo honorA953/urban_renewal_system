@@ -29,6 +29,19 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
+    # Passes the host's NVIDIA GPU through for onnxruntime-gpu (see requirements.txt) -
+    # this only works on a machine with an NVIDIA GPU + drivers + Docker's NVIDIA
+    # Container Toolkit set up (confirmed working on this dev machine's RTX 3060).
+    # Harmless to leave in for a GPU-less deployment target (e.g. the NAS) as long as
+    # onnxruntime-gpu still falls back to CPU when no CUDA device is available - if a
+    # future deploy target errors out on this instead, comment this block out there.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     environment:
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}

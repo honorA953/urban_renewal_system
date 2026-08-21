@@ -488,15 +488,19 @@ def _get_ocr_engine() -> RapidOCR:
 # A second, much heavier OCR engine (the newer `rapidocr` package - not the same as the
 # `rapidocr_onnxruntime` used everywhere else in this file - a "server"-tier PP-OCRv5
 # model instead of the default's lighter one) reserved for on-demand single-record
-# re-scans (see extract_title_deed's high_accuracy param, wired to the wizard's "重新
-# 上傳這一筆...並辨識" button). A/B tested against a real misread ("所有權人：卓明" -
-# missing the surname character entirely) on real project data: this model correctly
-# read the full name where the default model, and even RapidOCR's own dedicated
-# Traditional Chinese model, both did not. The cost is real too, though - loading it the
-# first time plus a single page took roughly two minutes in that same test, ~50-100x the
-# default engine - much too slow to use for every page of every batch import, but
-# acceptable for the rare "just this one record, I already know something's wrong"
-# re-scan a user explicitly asks for.
+# re-scans and the "掃描謄本匯入" wizard's optional accuracy toggle (see
+# extract_title_deed's high_accuracy param). A/B tested against a real misread ("所有
+# 權人：卓明" - missing the surname character entirely) on real project data: this
+# model correctly read the full name where the default model, and even RapidOCR's own
+# dedicated Traditional Chinese model, both did not.
+#
+# On CPU this model is genuinely slow (~50-100x the default engine, tens of seconds per
+# page) - use_cuda=True below lets it run on an NVIDIA GPU when one's actually
+# available (onnxruntime-gpu auto-falls-back to CPU with a log warning if not, so this
+# is safe to leave on for a GPU-less deploy target like the NAS too). Measured on a dev
+# machine's RTX 3060: ~57s/page on CPU -> ~2s/page on GPU, same weights/accuracy, just a
+# different execution backend - see LD_LIBRARY_PATH in the Dockerfile, needed for
+# onnxruntime to find the pip-installed CUDA/cuDNN .so files at runtime.
 _HIGH_ACCURACY_OCR_ENGINE = None
 
 
@@ -512,6 +516,7 @@ def _get_high_accuracy_ocr_engine():
                 "Rec.ocr_version": OCRVersion.PPOCRV5,
                 "Rec.model_type": ModelType.SERVER,
                 "Global.use_cls": False,
+                "EngineConfig.onnxruntime.use_cuda": True,
             }
         )
     return _HIGH_ACCURACY_OCR_ENGINE
@@ -612,14 +617,13 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type
     # OCR one at a time instead of using the same thread-pool treatment already applied
     # everywhere else in this file.
     #
-    # high_accuracy's engine (see _get_high_accuracy_ocr_engine) is ~50-100x slower per
-    # page than the default - capped independently of _HEADER_OCR_WORKERS (which scales
-    # with core count for the cheap engine) since this model's own internal compute
-    # already contends for CPU with itself. Measured real scaling on a 16-core box: 1
-    # worker ~57s/page, 2 workers ~52s/page, 4 workers ~44s/page - each extra worker
-    # helps less than linearly (the model's internal threading eats into the gain), so 4
-    # is picked as roughly where the returns flatten out rather than pushing higher for
-    # a shrinking benefit.
+    # high_accuracy's engine (see _get_high_accuracy_ocr_engine) is capped independently
+    # of _HEADER_OCR_WORKERS. On CPU it was measured at 1 worker ~57s/page, 2 ~52s/page,
+    # 4 ~44s/page - each extra worker helping less than linearly since the model's own
+    # internal compute already contends with itself, so 4 was picked as roughly where
+    # the returns flatten out. On a GPU (see use_cuda on the engine) a single page drops
+    # to ~2s, so this cap matters much less either way now, but is left at 4 rather than
+    # re-tuned for GPU concurrency (untested) since it's not causing any known problem.
     workers = 4 if high_accuracy else _HEADER_OCR_WORKERS
     if files:
         with ThreadPoolExecutor(max_workers=min(workers, len(files))) as pool:
