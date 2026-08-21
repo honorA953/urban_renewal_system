@@ -226,7 +226,18 @@ PAGES_PER_CHUNK = 8
 PDF_RENDER_DPI = 200
 
 
-def _expand_pdf_pages(content: bytes) -> list[tuple[bytes, str | None]]:
+# Used when extract_title_deed() is called with high_accuracy=True (the single-record
+# wizard, now defaulted to the accurate engine - see high_accuracy elsewhere in this
+# file). Rasterizing at a higher DPI gives the OCR model more actual pixels to
+# disambiguate visually-similar characters from (壹/臺, 羲/義 etc. were still getting
+# swapped even on the accurate engine at the default 200 DPI) - the accurate engine's
+# per-page cost already dwarfs the extra rasterization time this adds, so there's no
+# real reason to hold back resolution on this path specifically the way the fast/batch
+# paths need to.
+HIGH_ACCURACY_PDF_RENDER_DPI = 300
+
+
+def _expand_pdf_pages(content: bytes, dpi: int = PDF_RENDER_DPI) -> list[tuple[bytes, str | None]]:
     """Splits a multi-page PDF into one page-image per page. Chunking has to operate on
     actual pages, not uploaded files - a single 27-page PDF is still just 1 "file", so
     without this a whole batch deed uploaded as one PDF would still be sent in one
@@ -234,18 +245,18 @@ def _expand_pdf_pages(content: bytes) -> list[tuple[bytes, str | None]]:
     try:
         doc = fitz.open(stream=content, filetype="pdf")
         page_count = doc.page_count
-        # Rendering each page (200 DPI rasterization + JPEG encode) is the actual
-        # bottleneck for a large multi-page batch PDF - often more than the header OCR
-        # pass that follows it. fitz's C-level rendering releases the GIL, so a small
-        # thread pool (same pattern as the header-OCR pools below) lets a multi-page PDF
-        # use more than one CPU core here too, instead of rasterizing pages one at a time.
+        # Rendering each page (rasterization + JPEG encode) is the actual bottleneck for
+        # a large multi-page batch PDF - often more than the header OCR pass that
+        # follows it. fitz's C-level rendering releases the GIL, so a small thread pool
+        # (same pattern as the header-OCR pools below) lets a multi-page PDF use more
+        # than one CPU core here too, instead of rasterizing pages one at a time.
         def _render_one(i: int) -> tuple[bytes, str | None]:
             # JPEG instead of PNG: these are scanned pages with a dense repeating security
             # watermark pattern, which PNG (lossless) compresses very poorly - each page was
             # coming out ~5-7MB, making both the split-pages preview and every OCR upload
             # painfully slow, especially over a public tunnel. High-quality JPEG is a
             # fraction of the size with no meaningful loss of text legibility.
-            return doc[i].get_pixmap(dpi=PDF_RENDER_DPI).tobytes("jpg", jpg_quality=85), "image/jpeg"
+            return doc[i].get_pixmap(dpi=dpi).tobytes("jpg", jpg_quality=85), "image/jpeg"
 
         if page_count:
             with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, page_count)) as pool:
@@ -259,11 +270,11 @@ def _expand_pdf_pages(content: bytes) -> list[tuple[bytes, str | None]]:
     return pages
 
 
-def _flatten_to_pages(files: list[tuple[bytes, str | None]]) -> list[tuple[bytes, str | None]]:
+def _flatten_to_pages(files: list[tuple[bytes, str | None]], dpi: int = PDF_RENDER_DPI) -> list[tuple[bytes, str | None]]:
     pages: list[tuple[bytes, str | None]] = []
     for content, mime_type in files:
         if (mime_type or "").lower() == "application/pdf" or content[:5] == b"%PDF-":
-            pages.extend(_expand_pdf_pages(content))
+            pages.extend(_expand_pdf_pages(content, dpi=dpi))
         else:
             pages.append((content, mime_type))
     return pages
@@ -336,7 +347,7 @@ def extract_title_deed(
     if not files:
         raise OcrError("沒有可供辨識的檔案")
 
-    pages = _flatten_to_pages(files)
+    pages = _flatten_to_pages(files, dpi=HIGH_ACCURACY_PDF_RENDER_DPI if high_accuracy else PDF_RENDER_DPI)
     chunks = [pages[i : i + PAGES_PER_CHUNK] for i in range(0, len(pages), PAGES_PER_CHUNK)]
 
     results = []
