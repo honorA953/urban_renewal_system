@@ -27,7 +27,7 @@ class LandRecord(Base):
     # DB-generated (GENERATED ALWAYS AS ... STORED in schema.sql). Never assign these from
     # application code - MariaDB rejects any explicit value (including NULL) for such columns.
     owned_area_sqm: Mapped[float] = mapped_column(Numeric(14, 4), nullable=True)
-    ownership_share_pct: Mapped[float] = mapped_column(Numeric(9, 6), nullable=True)
+    ownership_share_pct: Mapped[float] = mapped_column(Numeric(12, 6), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
