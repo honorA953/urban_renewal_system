@@ -38,6 +38,23 @@ def _to_traditional(value):
     return value
 
 
+def _fix_li_character(value):
+    """「里」(the administrative-unit suffix, e.g. 三張犁里/黎和里) is a frequent OCR
+    misread as the visually similar 「裡」(meaning "inside") - the EXTRACTION_PROMPT asks
+    the model to self-correct this, but same as _to_traditional above, that's a soft
+    instruction the model doesn't reliably follow. 「裡」never legitimately appears in an
+    address/name field in these documents (it's not a word used in Taiwanese addresses),
+    so it's safe to deterministically replace every occurrence with 「里」here instead of
+    depending on the model to catch it."""
+    if isinstance(value, str):
+        return value.replace("裡", "里")
+    if isinstance(value, list):
+        return [_fix_li_character(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _fix_li_character(item) for key, item in value.items()}
+    return value
+
+
 def _fix_ownership_fractions(result: dict) -> dict:
     """A single owner's 權利範圍 (ownership share) can never exceed the whole - numerator
     must be <= denominator. The prompt below already asks the model to self-correct a
@@ -757,11 +774,11 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type
             last_error = OcrError(f"無法解析 OpenAI 回傳的 JSON:{exc}")
             continue
 
-        result = _fix_ownership_fractions(_to_traditional({
+        result = _fix_ownership_fractions(_fix_li_character(_to_traditional({
             "land_parcels": parsed.get("land_parcels") or [],
             "encumbrances": parsed.get("encumbrances") or [],
             "buildings": parsed.get("buildings") or [],
-        }))
+        })))
         # TEMP DEBUG - remove once the missing-encumbrances extraction issue is diagnosed.
         print(
             "[_extract_title_deed_chunk] model result: "
