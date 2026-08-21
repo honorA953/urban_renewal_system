@@ -609,11 +609,14 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type
     # everywhere else in this file.
     #
     # high_accuracy's engine (see _get_high_accuracy_ocr_engine) is ~50-100x slower per
-    # page than the default - capped at 2 concurrent workers instead of
-    # _HEADER_OCR_WORKERS regardless of core count, since that model's own internal
-    # compute already saturates a couple of cores by itself and this path is only ever a
-    # handful of pages (a single re-scanned record), not a full batch.
-    workers = 2 if high_accuracy else _HEADER_OCR_WORKERS
+    # page than the default - capped independently of _HEADER_OCR_WORKERS (which scales
+    # with core count for the cheap engine) since this model's own internal compute
+    # already contends for CPU with itself. Measured real scaling on a 16-core box: 1
+    # worker ~57s/page, 2 workers ~52s/page, 4 workers ~44s/page - each extra worker
+    # helps less than linearly (the model's internal threading eats into the gain), so 4
+    # is picked as roughly where the returns flatten out rather than pushing higher for
+    # a shrinking benefit.
+    workers = 4 if high_accuracy else _HEADER_OCR_WORKERS
     if files:
         with ThreadPoolExecutor(max_workers=min(workers, len(files))) as pool:
             page_texts = list(pool.map(lambda args: _ocr_page_text(args[0], high_accuracy), files))
