@@ -111,6 +111,10 @@ class LandownerUpdate(BaseModel):
     notes: str | None = None
 
 
+class LandownerMergeRequest(BaseModel):
+    source_ids: list[int] = Field(min_length=1)
+
+
 class LandownerRead(BaseModel):
     id: int
     project_id: int

@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from database import get_db
 from deps import get_current_user, require_staff_or_admin
 from models.building_record import BuildingRecord
+from models.consent_record import ConsentRecord
+from models.contact_log import ContactLog
+from models.document import Document
 from models.land_record import LandRecord
 from models.landowner import Landowner
 from models.user import User
@@ -15,6 +18,7 @@ from schemas.landowner import (
     BuildingRecordRead,
     BuildingRecordUpdate,
     LandownerCreate,
+    LandownerMergeRequest,
     LandownerRead,
     LandownerUpdate,
     LandRecordCreate,
@@ -127,6 +131,43 @@ def delete_landowner(
     landowner = get_landowner_or_404(db, project_id, landowner_id)
     db.delete(landowner)
     db.commit()
+
+
+@router.post("/{landowner_id}/merge", response_model=LandownerRead)
+def merge_landowners(
+    project_id: int,
+    landowner_id: int,
+    payload: LandownerMergeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_staff_or_admin),
+):
+    """Merges one or more duplicate landowner records into `landowner_id` (the
+    survivor): every land/building record, consent record, contact log, and document
+    reference that pointed at a source landowner is re-pointed at the survivor, then the
+    now-empty source rows are deleted. Needed because landowner de-duplication during OCR
+    import matches by exact name string - a residual simplified-character or OCR misread
+    that slips past that matching silently creates a second landowner instead of merging
+    into the existing one, and this is the cleanup path for when that already happened."""
+    survivor = get_landowner_or_404(db, project_id, landowner_id)
+
+    if landowner_id in payload.source_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能將地主合併到自己")
+
+    sources = db.scalars(
+        select(Landowner).where(Landowner.id.in_(payload.source_ids), Landowner.project_id == project_id)
+    ).all()
+    if len(sources) != len(set(payload.source_ids)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="部分地主不存在")
+
+    source_ids = [source.id for source in sources]
+    for model in (LandRecord, BuildingRecord, ConsentRecord, ContactLog, Document):
+        db.execute(update(model).where(model.landowner_id.in_(source_ids)).values(landowner_id=landowner_id))
+
+    for source in sources:
+        db.delete(source)
+
+    db.commit()
+    return get_landowner_or_404(db, project_id, survivor.id)
 
 
 def get_land_record_or_404(db: Session, project_id: int, landowner_id: int, record_id: int) -> LandRecord:

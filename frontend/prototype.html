@@ -1862,6 +1862,7 @@ async function renderLandownersTypeTab(el, type) {
       ${
         isEditor()
           ? `<div style="display:flex;gap:8px">
+              <button class="btn-secondary btn-sm" id="merge-landowners-btn" disabled>合併選取的地主</button>
               <button class="btn-secondary btn-sm" id="scan-title-deed-btn">${isLand ? "土地登記匯入" : "建物登記匯入"}</button>
               <button class="btn-primary btn-sm" id="add-landowner-btn">+ 新增地主</button>
             </div>`
@@ -1871,6 +1872,7 @@ async function renderLandownersTypeTab(el, type) {
     <div class="table-wrap">
       <table>
         <thead><tr>
+          ${isEditor() ? "<th></th>" : ""}
           <th>姓名</th><th>身分證字號</th><th>電話</th><th>聯絡狀態</th><th>代表人</th><th>${isLand ? "土地" : "建物"}</th>
           ${isEditor() ? "<th>操作</th>" : ""}
         </tr></thead>
@@ -1879,6 +1881,7 @@ async function renderLandownersTypeTab(el, type) {
             .map(
               (o) => `
             <tr>
+              ${isEditor() ? `<td><input type="checkbox" class="merge-select-cb" value="${o.id}"></td>` : ""}
               <td>${escapeHtml(o.name)}</td>
               <td>${escapeHtml(o.id_number) || "-"}</td>
               <td>${escapeHtml(o.phone) || "-"}</td>
@@ -1991,6 +1994,22 @@ async function renderLandownersTypeTab(el, type) {
   if (addBtn) addBtn.addEventListener("click", openAddLandownerModal);
   const scanBtn = document.getElementById("scan-title-deed-btn");
   if (scanBtn) scanBtn.addEventListener("click", isLand ? openTitleDeedWizard : openBuildingTitleDeedWizard);
+
+  const mergeBtn = document.getElementById("merge-landowners-btn");
+  const mergeCheckboxes = el.querySelectorAll(".merge-select-cb");
+  const updateMergeBtnState = () => {
+    if (!mergeBtn) return;
+    const checkedCount = el.querySelectorAll(".merge-select-cb:checked").length;
+    mergeBtn.disabled = checkedCount < 2;
+  };
+  mergeCheckboxes.forEach((cb) => cb.addEventListener("change", updateMergeBtnState));
+  if (mergeBtn) {
+    mergeBtn.addEventListener("click", () => {
+      const selectedIds = Array.from(el.querySelectorAll(".merge-select-cb:checked")).map((cb) => Number(cb.value));
+      const selectedOwners = landowners.filter((o) => selectedIds.includes(o.id));
+      openMergeLandownersModal(selectedOwners);
+    });
+  }
 
   el.querySelectorAll("[data-add-land]").forEach((btn) => {
     btn.addEventListener("click", () => openAddLandRecordModal(Number(btn.dataset.addLand)));
@@ -2234,6 +2253,41 @@ async function deleteLandowner(id) {
     toast("已刪除", "success");
     renderTab(state.activeTab);
   } catch (err) {}
+}
+
+function openMergeLandownersModal(owners) {
+  openModal(
+    "合併地主",
+    `<p class="helper-text">選擇要保留的地主,其他被選取的地主的土地/建物/聯絡紀錄會全部併入保留的這筆,其餘資料則會被刪除。</p>
+    <form id="merge-landowner-form">
+      ${owners
+        .map(
+          (o, i) => `<label style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+            <input type="radio" name="survivor" value="${o.id}" ${i === 0 ? "checked" : ""}>
+            <span>${escapeHtml(o.name)}${o.id_number ? ` (${escapeHtml(o.id_number)})` : ""} - 土地 ${o.land_records.length} 筆 / 建物 ${o.building_records.length} 筆</span>
+          </label>`
+        )
+        .join("")}
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-primary">確認合併</button>
+      </div>
+    </form>`
+  );
+  document.getElementById("merge-landowner-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const survivorId = Number(new FormData(e.target).get("survivor"));
+    const sourceIds = owners.map((o) => o.id).filter((id) => id !== survivorId);
+    try {
+      await api(`/projects/${state.currentProjectId}/landowners/${survivorId}/merge`, {
+        method: "POST",
+        body: { source_ids: sourceIds },
+      });
+      closeModal();
+      toast("已合併地主", "success");
+      renderTab(state.activeTab);
+    } catch (err) {}
+  });
 }
 
 /* ---- Land / building records (per-landowner, added after creation) ---- */

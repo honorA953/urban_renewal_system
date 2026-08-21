@@ -15,6 +15,7 @@ pillow==10.4.0
 rapidocr-onnxruntime==1.4.4
 rapidocr==3.9.2
 numpy==2.5.2
+opencc-python-reimplemented==0.1.7
 
 # GPU acceleration for the high-accuracy engine - onnxruntime-gpu itself is
 # deliberately NOT listed here (see Dockerfile: it's installed as a separate

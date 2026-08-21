@@ -9,12 +9,33 @@ from concurrent.futures import ThreadPoolExecutor
 import fitz
 import httpx
 import numpy as np
+from opencc import OpenCC
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
 
 from config import settings
 
 OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
+
+# The EXTRACTION_PROMPT below already tells the model to output Traditional Chinese, but
+# that's a soft instruction the model doesn't always follow perfectly (real examples:
+# "陈柏安" instead of "陳柏安", "楼" instead of "樓") - a simplified character slipping
+# through a name field silently creates a second, seemingly-different landowner record
+# instead of matching the existing one, since matching is done by exact string. s2twp
+# (Simplified -> Taiwan Traditional, with phrase-level substitutions like idioms) is run
+# as a deterministic backstop over every extracted string field so this can't happen
+# regardless of what the model returns.
+_S2TW_CONVERTER = OpenCC("s2twp")
+
+
+def _to_traditional(value):
+    if isinstance(value, str):
+        return _S2TW_CONVERTER.convert(value)
+    if isinstance(value, list):
+        return [_to_traditional(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _to_traditional(item) for key, item in value.items()}
+    return value
 
 EXTRACTION_PROMPT = """你是台灣地政士助理。以下會依序提供同一份謄本文件連續頁面、經本地 OCR 引擎辨識出的原始文字\
 內容(不是圖片)。這份文件可能是「單一地號/建號」的謄本,也可能是「批次謄本」——同一份文件裡連續印著好幾筆不同地號、\
@@ -705,11 +726,11 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type
             last_error = OcrError(f"無法解析 OpenAI 回傳的 JSON:{exc}")
             continue
 
-        result = {
+        result = _to_traditional({
             "land_parcels": parsed.get("land_parcels") or [],
             "encumbrances": parsed.get("encumbrances") or [],
             "buildings": parsed.get("buildings") or [],
-        }
+        })
         # TEMP DEBUG - remove once the missing-encumbrances extraction issue is diagnosed.
         print(
             "[_extract_title_deed_chunk] model result: "
