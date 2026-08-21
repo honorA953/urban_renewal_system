@@ -17,9 +17,9 @@
 
   :root {
     color-scheme: light;
-    --brand: #2dd4dd;
-    --brand-dark: #0f9ba3;
-    --brand-light: #e3fbfc;
+    --brand: #42cbd0;
+    --brand-dark: #37b0b5;
+    --brand-light: #f0fbfb;
     --bg: #f2f6f7;
     --surface: #ffffff;
     --surface-2: #f5f8f9;
@@ -50,9 +50,9 @@
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       color-scheme: dark;
-      --brand: #2dd4dd;
-      --brand-dark: #55c9d1;
-      --brand-light: rgba(45, 212, 221, .16);
+      --brand: #42cbd0;
+      --brand-dark: #6fd9dd;
+      --brand-light: rgba(66, 203, 208, .16);
       --bg: #0e1618;
       --surface: #172224;
       --surface-2: #1f2c2e;
@@ -177,18 +177,16 @@
     justify-content: center;
     position: relative;
     overflow: hidden;
-    background:
-      radial-gradient(560px circle at 12% 15%, rgba(45, 212, 221, .16), transparent 60%),
-      radial-gradient(680px circle at 90% 85%, rgba(15, 155, 163, .12), transparent 60%),
-      linear-gradient(160deg, var(--login-glow) 0%, var(--bg) 55%);
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%);
   }
   .login-card {
-    background: var(--surface);
-    border-radius: 18px;
+    background: #ffffff;
+    border-radius: 20px;
     box-shadow: var(--shadow-modal);
     border: 1px solid var(--card-rim);
-    padding: 44px 38px;
-    width: 350px;
+    padding: 40px 36px;
+    width: 100%;
+    max-width: 420px;
     position: relative;
     z-index: 1;
     animation: login-in .5s cubic-bezier(.22,1,.36,1);
@@ -221,43 +219,74 @@
   .login-brand-dot img { height: 116px; width: auto; display: block; }
   #login-form .btn-primary { padding: 10px 16px; font-size: 16px; margin-top: 4px; }
 
-  /* ---------- App shell ---------- */
-  #app { min-height: 100vh; display: flex; flex-direction: column; }
-  .navbar {
+  /* ---------- App shell (sidebar layout) ---------- */
+  #app { min-height: 100vh; }
+  .app-layout { display: flex; min-height: 100vh; }
+  .sb {
+    width: 264px; flex-shrink: 0;
     background: var(--nav-bg);
     backdrop-filter: blur(10px) saturate(1.4);
     -webkit-backdrop-filter: blur(10px) saturate(1.4);
-    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
     display: flex;
-    align-items: center;
-    padding: 0 24px;
-    height: 72px;
-    gap: 24px;
+    flex-direction: column;
     position: sticky;
     top: 0;
+    height: 100vh;
+    overflow-y: auto;
     z-index: 20;
   }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
+  .navbar { display: flex; align-items: center; padding: 20px 20px 16px; gap: 10px; flex-shrink: 0; }
   .navbar .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17.5px; letter-spacing: .02em; }
   .navbar .brand .brand-text {
-    font-size: 21px; font-weight: 900; letter-spacing: .01em;
+    font-size: 19px; font-weight: 900; letter-spacing: .01em;
     background: linear-gradient(135deg, var(--brand), var(--brand-dark));
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
   .navbar .brand-dot {
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
-  .navbar .brand-dot img { height: 54px; width: auto; display: block; }
-  .nav-links { display: flex; gap: 4px; flex: 1; }
+  .navbar .brand-dot img { height: 40px; width: auto; display: block; }
+  .nav-links { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; flex-shrink: 0; }
   .nav-link {
     background: none; color: var(--text-muted); font-weight: 600; padding: 8px 14px; border-radius: var(--radius-sm);
+    text-align: left; width: 100%;
   }
   .nav-link:hover { background: var(--surface-2); color: var(--text); opacity: 1; }
   .nav-link.active { background: var(--brand-light); color: var(--brand-dark); }
   .nav-link.active:hover { background: var(--brand-light); }
-  .nav-user { display: flex; align-items: center; gap: 10px; font-size: 14.5px; color: var(--text-muted); }
+  .sb-sec { padding: 18px 20px 6px; font-size: 11.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); flex-shrink: 0; }
+  #sb-cases { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; overflow-y: auto; flex: 1; min-height: 0; }
+  .sb-cg { margin-bottom: 1px; }
+  .sb-cg-head {
+    display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: var(--radius-sm);
+    cursor: pointer; color: var(--text-muted); font-size: 12.5px; font-weight: 700; user-select: none;
+  }
+  .sb-cg-head:hover { background: var(--surface-2); color: var(--text); }
+  .sb-cg-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sb-cg-count {
+    font-size: 11px; padding: 1px 6px; border-radius: 5px;
+    background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border);
+  }
+  .sb-cg-arrow { font-size: 10px; color: var(--text-muted); transition: transform .2s; }
+  .sb-cg-arrow.open { transform: rotate(90deg); }
+  .sb-cg-items { overflow: hidden; max-height: 0; transition: max-height .25s ease; }
+  .sb-cg-items.open { max-height: 800px; }
+  .sb-case-item {
+    display: block; padding: 7px 14px 7px 22px; border-radius: var(--radius-sm);
+    color: var(--text-muted); font-weight: 600; font-size: 13.5px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sb-case-item:hover { background: var(--surface-2); color: var(--text); }
+  .sb-case-item.active { background: var(--brand-light); color: var(--brand-dark); }
+  .nav-user {
+    display: flex; align-items: center; gap: 10px; font-size: 14.5px; color: var(--text-muted);
+    padding: 14px 20px; border-top: 1px solid var(--border); margin-top: auto; flex-shrink: 0;
+  }
   #theme-toggle-btn { display: flex; align-items: center; justify-content: center; padding: 6px; width: 30px; height: 30px; }
   #theme-toggle-btn svg { width: 15px; height: 15px; }
-  .avatar-menu { position: relative; }
+  .avatar-menu { position: relative; flex: 1; }
   .avatar-btn {
     width: 36px; height: 36px; border-radius: 50%; padding: 0; border: none; flex-shrink: 0;
     background: linear-gradient(135deg, var(--brand), var(--brand-dark));
@@ -267,7 +296,7 @@
   }
   .avatar-btn:hover { opacity: .92; transform: translateY(-1px); }
   .avatar-dropdown {
-    position: absolute; top: calc(100% + 10px); right: 0; width: 220px; z-index: 30;
+    position: absolute; bottom: calc(100% + 10px); top: auto; left: 0; width: 220px; z-index: 30;
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
     box-shadow: var(--shadow-modal); padding: 6px; display: flex; flex-direction: column; gap: 2px;
     animation: modal-in .16s cubic-bezier(.22,1,.36,1);
@@ -303,7 +332,10 @@
   .app-footer-brand svg { width: 19px; height: 19px; color: var(--brand); flex-shrink: 0; }
   .login-footer {
     position: absolute; left: 0; right: 0; bottom: 18px; border-top: none; z-index: 1;
+    color: rgba(255, 255, 255, .55);
   }
+  .login-footer .app-footer-brand { color: rgba(255, 255, 255, .85); }
+  .login-footer .app-footer-brand svg { color: var(--brand); }
 
   /* ---------- Dashboard ---------- */
   .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
@@ -341,6 +373,21 @@
   .mini-badge.alert { background: var(--danger-light); color: var(--danger); font-weight: 700; }
   .mini-badge.gate-ok { background: var(--success-light); color: var(--success); font-weight: 700; }
   .empty-state { text-align: center; color: var(--text-muted); padding: 70px 20px; font-size: 15px; }
+  .stg-dots { display: flex; gap: 3px; flex: 1; }
+  .stg-dots .sd { height: 5px; flex: 1; border-radius: 3px; background: var(--surface-2); }
+  .stg-dots .sd.done { background: var(--brand); }
+  .stg-dots .sd.cur { background: var(--brand-dark); }
+  .donut-row { display: flex; justify-content: space-around; gap: 6px; }
+  .donut-item { text-align: center; }
+  .donut-wrap { position: relative; width: 62px; height: 62px; margin: 0 auto 4px; }
+  .donut-pct { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 800; letter-spacing: -.02em; }
+  .donut-lbl { font-size: 11.5px; color: var(--text-muted); font-weight: 600; }
+  .alert-tier-row { display: flex; gap: 5px; flex-wrap: wrap; }
+  .alert-tier { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 4px 6px; border-radius: 6px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .alert-tier-warn { background: var(--warning-light); color: var(--warning); }
+  .alert-tier-alert { background: #fff2e6; color: #c2650f; }
+  .alert-tier-urgent { background: var(--danger-light); color: var(--danger); }
 
   /* ---------- Project detail ---------- */
   .back-link { background: none; color: var(--text-muted); font-weight: 600; padding: 4px 0; margin-bottom: 12px; }
@@ -405,6 +452,32 @@
     border-radius: 100px; padding: 3px 10px; font-size: 12.5px; color: var(--text); white-space: nowrap;
   }
   .wizard-confirm-chip.encumbrance { background: var(--warning-light, #fff4e0); border-color: var(--warning, #e0a020); color: var(--warning-dark, #8a5a00); }
+
+  .wizard-review-split { display: flex; gap: 16px; align-items: flex-start; }
+  .wizard-review-thumbs {
+    width: 160px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
+    max-height: 480px; overflow-y: auto;
+  }
+  .wizard-review-thumbs img {
+    width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border); cursor: zoom-in;
+    transition: border-color .15s ease;
+  }
+  .wizard-review-thumbs img:hover { border-color: var(--brand); }
+  .wizard-review-form { flex: 1; min-width: 0; }
+  .wizard-reviewed-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 12px;
+    background: var(--surface-2); border-radius: var(--radius-sm); font-size: 13.5px; font-weight: 600;
+    color: var(--text-muted); cursor: pointer;
+  }
+  .wizard-reviewed-row input { accent-color: var(--brand); cursor: pointer; }
+
+  .wizard-relation-row { display: grid; grid-template-columns: 1fr 34px 1fr; gap: 10px; align-items: stretch; margin-top: 10px; }
+  .wizard-relation-card {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px;
+  }
+  .wizard-relation-card-title { font-weight: 700; font-size: 13.5px; margin-bottom: 6px; }
+  .wizard-relation-card-sub { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+  .wizard-relation-arrow { display: flex; align-items: center; justify-content: center; font-size: 20px; color: var(--brand); }
 
   .section-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 10px; flex-wrap: wrap; }
   .section-toolbar h3 { margin: 0; font-size: 16.5px; font-weight: 700; }
@@ -482,13 +555,18 @@
 
   @media (max-width: 640px) {
     main { padding: 18px 14px 40px; }
-    /* Desktop navbar sizing (72px tall, 54px logo, 21px brand text) doesn't leave
-       enough room next to the 案件總覽 nav button and the avatar/theme-toggle on a
-       phone-width screen - shrink everything down together. */
-    .navbar { padding: 0 12px; gap: 10px; height: 56px; }
+    /* Fixed-width sidebar doesn't fit on a phone screen - stack it above the
+       content as a horizontal bar instead. */
+    .app-layout { flex-direction: column; }
+    .sb {
+      width: 100%; height: auto; max-height: 60vh; position: static;
+      flex-direction: column; border-right: none; border-bottom: 1px solid var(--border);
+    }
+    .navbar { padding: 12px; gap: 10px; }
     .navbar .brand-dot img { height: 34px; }
     .navbar .brand .brand-text { font-size: 15.5px; }
     .nav-link { padding: 6px 10px; font-size: 13px; }
+    #sb-cases { flex: 0 0 auto; max-height: 30vh; }
     .login-card { width: 100%; padding: 34px 24px; }
     /* Narrow screens: stack the page title above its action buttons instead of
        squeezing them onto one row (which forced button text to wrap mid-word). */
@@ -554,16 +632,20 @@
 
 <!-- ============ APP ============ -->
 <div id="app" class="hidden">
+  <div class="app-layout">
+  <nav class="sb">
   <div class="navbar">
     <div class="brand">
       <div class="brand-dot"><img src="data:image/png;base64,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" alt="丞石建築"></div>
       <span class="brand-text">都更管理系統</span>
     </div>
+  </div>
     <div class="nav-links">
       <button class="nav-link" data-nav="dashboard">案件總覽</button>
     </div>
+    <div class="sb-sec">案件</div>
+    <div id="sb-cases"></div>
     <div class="nav-user">
-      <button class="btn-secondary btn-sm" id="theme-toggle-btn" type="button" title="切換深色/淺色模式" aria-label="切換深色/淺色模式"></button>
       <div class="avatar-menu">
         <button class="avatar-btn" id="avatar-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="帳號選單"></button>
         <div class="avatar-dropdown hidden" id="avatar-dropdown">
@@ -578,9 +660,11 @@
           <button class="avatar-dropdown-item danger" id="logout-btn">登出</button>
         </div>
       </div>
+      <button class="btn-secondary btn-sm" id="theme-toggle-btn" type="button" title="切換深色/淺色模式" aria-label="切換深色/淺色模式"></button>
     </div>
-  </div>
+  </nav>
 
+  <div class="main">
   <main>
     <!-- Dashboard -->
     <div id="view-dashboard">
@@ -599,6 +683,38 @@
         </div>
       </div>
       <div id="project-grid" class="project-grid"></div>
+    </div>
+
+    <!-- New project -->
+    <div id="view-new-project" class="hidden">
+      <button class="back-link" id="back-to-dashboard-from-new-project">← 返回</button>
+      <div class="page-header">
+        <h2>建立都更案</h2>
+      </div>
+      <form id="project-form" style="max-width:640px">
+        <div class="field-row">
+          <div class="field">
+            <label>縣市</label>
+            <select name="city" id="np-city"></select>
+          </div>
+          <div class="field"><label>行政區</label><input name="district"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>案件代碼</label><input name="project_code" id="np-code" required></div>
+          <div class="field"><label>案件名稱</label><input name="name" required></div>
+        </div>
+        <div class="field"><label>地址</label><input name="address"></div>
+        <div class="field"><label>備註</label><textarea name="description" rows="3"></textarea></div>
+        <div class="field">
+          <label>謄本掃描檔(選填)</label>
+          <input type="file" id="new-project-deed-files" accept="image/*,application/pdf" multiple autocomplete="off">
+          <div class="helper-text">建立案件後會直接開啟匯入精靈,自動辨識並建立地號/建物/地主資料</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" id="cancel-new-project-btn">取消</button>
+          <button type="submit" class="btn-primary">建立</button>
+        </div>
+      </form>
     </div>
 
     <!-- Project detail -->
@@ -662,6 +778,8 @@
     </div>
     <div>© 2026 丞石建築開發股份有限公司 版權所有 </div>
   </footer>
+  </div>
+  </div>
 </div>
 
 <script>
@@ -963,10 +1081,71 @@ document.querySelectorAll(".nav-link").forEach((btn) => {
 
 function setActiveNav(name) {
   document.querySelectorAll(".nav-link").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
+  document.querySelectorAll(".sb-case-item").forEach((b) => b.classList.remove("active"));
+}
+
+const expandedSidebarCities = new Set();
+let sidebarCitiesInitialized = false;
+
+function renderSidebarProjects(projects) {
+  const wrap = document.getElementById("sb-cases");
+  if (!wrap) return;
+
+  const byCity = {};
+  (projects || []).forEach((p) => {
+    const city = p.city || "未分類";
+    (byCity[city] = byCity[city] || []).push(p);
+  });
+
+  if (!sidebarCitiesInitialized) {
+    Object.keys(byCity).forEach((city) => expandedSidebarCities.add(city));
+    sidebarCitiesInitialized = true;
+  }
+
+  wrap.innerHTML = Object.entries(byCity)
+    .map(([city, cases]) => {
+      const open = expandedSidebarCities.has(city);
+      return `
+        <div class="sb-cg">
+          <div class="sb-cg-head" data-city="${escapeHtml(city)}">
+            <span class="sb-cg-name">${escapeHtml(city)}</span>
+            <span class="sb-cg-count">${cases.length}</span>
+            <span class="sb-cg-arrow ${open ? "open" : ""}">▶</span>
+          </div>
+          <div class="sb-cg-items ${open ? "open" : ""}">
+            ${cases
+              .map(
+                (p) =>
+                  `<div class="sb-case-item" data-project-id="${p.id}">${escapeHtml(p.name)}</div>`
+              )
+              .join("")}
+          </div>
+        </div>`;
+    })
+    .join("");
+
+  wrap.querySelectorAll(".sb-cg-head").forEach((el) => {
+    el.addEventListener("click", () => {
+      const city = el.dataset.city;
+      if (expandedSidebarCities.has(city)) expandedSidebarCities.delete(city);
+      else expandedSidebarCities.add(city);
+      renderSidebarProjects(projects);
+    });
+  });
+  wrap.querySelectorAll(".sb-case-item").forEach((el) => {
+    el.addEventListener("click", () => openProject(Number(el.dataset.projectId)));
+  });
+}
+
+function setActiveSidebarCase(projectId) {
+  document.querySelectorAll(".nav-link").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".sb-case-item").forEach((b) =>
+    b.classList.toggle("active", Number(b.dataset.projectId) === Number(projectId))
+  );
 }
 
 function showView(id) {
-  ["view-dashboard", "view-project-detail", "view-users", "view-loginlogs"].forEach((v) => {
+  ["view-dashboard", "view-new-project", "view-project-detail", "view-users", "view-loginlogs"].forEach((v) => {
     document.getElementById(v).classList.toggle("hidden", v !== id);
   });
 }
@@ -975,6 +1154,30 @@ function showView(id) {
 
 let selectedProjectIds = new Set();
 let dashboardProjectsById = {};
+
+function donutSvg(pct, size = 62) {
+  const r = size / 2 - 6;
+  const c = size / 2;
+  const circumference = 2 * Math.PI * r;
+  const filled = (Math.max(0, Math.min(100, pct)) / 100) * circumference;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--surface-2)" stroke-width="6"/>
+    <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--brand)" stroke-width="6"
+      stroke-dasharray="${filled} ${circumference - filled}" stroke-linecap="round"
+      transform="rotate(-90 ${c} ${c})"/>
+  </svg>`;
+}
+
+function alertTiers(alerts) {
+  const tiers = { warn: 0, alert: 0, urgent: 0 };
+  (alerts || []).forEach((a) => {
+    const days = a.days_since_last_contact;
+    if (days == null || days >= 30) tiers.urgent++;
+    else if (days >= 14) tiers.alert++;
+    else tiers.warn++;
+  });
+  return tiers;
+}
 
 async function goToDashboard() {
   setActiveNav("dashboard");
@@ -997,6 +1200,8 @@ async function loadDashboard() {
     return;
   }
 
+  renderSidebarProjects(projects);
+
   const addProjectTileHtml = isEditor()
     ? `<div class="card project-card project-card-add" id="add-project-tile">
         <span class="project-card-add-icon">+</span>
@@ -1006,7 +1211,7 @@ async function loadDashboard() {
 
   if (!projects.length) {
     grid.innerHTML = addProjectTileHtml || `<div class="empty-state">目前沒有可查看的案件</div>`;
-    document.getElementById("add-project-tile")?.addEventListener("click", openNewProjectModal);
+    document.getElementById("add-project-tile")?.addEventListener("click", goToNewProject);
     return;
   }
 
@@ -1028,12 +1233,38 @@ async function loadDashboard() {
 
   grid.innerHTML = addProjectTileHtml + enriched
     .map(({ p, ratio, alerts }) => {
-      const pct = Math.round((p.current_stage / 9) * 100);
-      const gateBadge =
+      const stageDots = Array.from({ length: 9 }, (_, i) => {
+        const idx = i + 1;
+        const cls = idx < p.current_stage ? "done" : idx === p.current_stage ? "cur" : "";
+        return `<div class="sd ${cls}"></div>`;
+      }).join("");
+      const headcountPct = ratio && ratio.headcount_total > 0 ? Math.round(ratio.headcount_ratio * 100) : 0;
+      const landPct = ratio && ratio.headcount_total > 0 ? Math.round(ratio.land_share_ratio * 100) : 0;
+      const donutRow =
         ratio && ratio.headcount_total > 0
-          ? `<span class="mini-badge ${ratio.dual_gate_passed ? "gate-ok" : ""}">同意度 人數${fmtPct(ratio.headcount_ratio)} / 面積${fmtPct(ratio.land_share_ratio)}</span>`
+          ? `<div class="donut-row">
+              <div class="donut-item">
+                <div class="donut-wrap">${donutSvg(headcountPct)}<div class="donut-pct">${headcountPct}%</div></div>
+                <div class="donut-lbl">人數同意</div>
+              </div>
+              <div class="donut-item">
+                <div class="donut-wrap">${donutSvg(landPct)}<div class="donut-pct">${landPct}%</div></div>
+                <div class="donut-lbl">面積同意</div>
+              </div>
+            </div>`
           : "";
-      const alertBadge = alerts.length ? `<span class="mini-badge alert">⚠ ${alerts.length} 位待跟進</span>` : "";
+      const gateBadge =
+        ratio && ratio.headcount_total > 0 && ratio.dual_gate_passed
+          ? `<span class="mini-badge gate-ok">已達雙門檻</span>`
+          : "";
+      const tiers = alertTiers(alerts);
+      const alertTierRow = alerts.length
+        ? `<div class="alert-tier-row">
+            <div class="alert-tier alert-tier-warn">⚠ 提醒 ${tiers.warn}</div>
+            <div class="alert-tier alert-tier-alert">🔶 警示 ${tiers.alert}</div>
+            <div class="alert-tier alert-tier-urgent">🔴 緊急 ${tiers.urgent}</div>
+          </div>`
+        : "";
       return `
         <div class="card project-card" data-project-id="${p.id}">
           <div class="project-card-top">
@@ -1050,9 +1281,11 @@ async function loadDashboard() {
           </div>
           <div>
             <div class="card-meta-row"><span>SOP 進度</span><span>第 ${p.current_stage} / 9 關</span></div>
-            <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+            <div class="stg-dots">${stageDots}</div>
           </div>
-          <div class="badge-row">${gateBadge}${alertBadge}</div>
+          ${donutRow}
+          <div class="badge-row">${gateBadge}</div>
+          ${alertTierRow}
           ${
             isAdmin()
               ? `<div style="text-align:right"><button type="button" class="btn-link" style="color:var(--danger)" data-delete-project="${p.id}">刪除案件</button></div>`
@@ -1065,7 +1298,7 @@ async function loadDashboard() {
   grid.querySelectorAll(".project-card[data-project-id]").forEach((card) => {
     card.addEventListener("click", () => openProject(Number(card.dataset.projectId)));
   });
-  document.getElementById("add-project-tile")?.addEventListener("click", openNewProjectModal);
+  document.getElementById("add-project-tile")?.addEventListener("click", goToNewProject);
 
   grid.querySelectorAll("[data-delete-project]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -1210,59 +1443,41 @@ async function suggestNextProjectCode() {
   return `${year}-${String(maxSeq + 1).padStart(3, "0")}`;
 }
 
-document.getElementById("new-project-btn").addEventListener("click", openNewProjectModal);
+document.getElementById("new-project-btn").addEventListener("click", goToNewProject);
 
-async function openNewProjectModal() {
-  const suggestedCode = await suggestNextProjectCode();
-  openModal(
-    "新增案件",
-    `
-    <form id="project-form">
-      <div class="field-row">
-        <div class="field">
-          <label>縣市</label>
-          <select name="city">
-            <option value="">請選擇</option>
-            ${TAIWAN_CITIES.map((c) => `<option value="${c}">${c}</option>`).join("")}
-          </select>
-        </div>
-        <div class="field"><label>行政區</label><input name="district"></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label>案件代碼</label><input name="project_code" value="${escapeHtml(suggestedCode)}" required></div>
-        <div class="field"><label>案件名稱</label><input name="name" required></div>
-      </div>
-      <div class="field"><label>地址</label><input name="address"></div>
-      <div class="field"><label>備註</label><textarea name="description" rows="3"></textarea></div>
-      <div class="field">
-        <label>謄本掃描檔(選填)</label>
-        <input type="file" id="new-project-deed-files" accept="image/*,application/pdf" multiple autocomplete="off">
-        <div class="helper-text">建立案件後會直接開啟匯入精靈,自動辨識並建立地號/建物/地主資料</div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
-        <button type="submit" class="btn-primary">建立</button>
-      </div>
-    </form>`
-  );
-  document.getElementById("project-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    const deedFiles = Array.from(document.getElementById("new-project-deed-files").files);
-    const payload = Object.fromEntries(fd.entries());
-    try {
-      const project = await api("/projects", { method: "POST", body: payload });
-      closeModal();
-      toast("案件已建立", "success");
-      await loadDashboard();
-      await openProject(project.id);
-      if (deedFiles.length) {
-        titleDeedWizard = { files: deedFiles, pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "both" };
-        renderWizardStep0();
-      }
-    } catch (err) {}
-  });
+async function goToNewProject() {
+  setActiveNav("");
+  document.querySelectorAll(".sb-case-item").forEach((b) => b.classList.remove("active"));
+  showView("view-new-project");
+
+  const citySelect = document.getElementById("np-city");
+  citySelect.innerHTML =
+    `<option value="">請選擇</option>` + TAIWAN_CITIES.map((c) => `<option value="${c}">${c}</option>`).join("");
+
+  const form = document.getElementById("project-form");
+  form.reset();
+  document.getElementById("np-code").value = await suggestNextProjectCode();
 }
+
+document.getElementById("cancel-new-project-btn").addEventListener("click", goToDashboard);
+document.getElementById("back-to-dashboard-from-new-project").addEventListener("click", goToDashboard);
+
+document.getElementById("project-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const deedFiles = Array.from(document.getElementById("new-project-deed-files").files);
+  const payload = Object.fromEntries(fd.entries());
+  try {
+    const project = await api("/projects", { method: "POST", body: payload });
+    toast("案件已建立", "success");
+    await loadDashboard();
+    await openProject(project.id);
+    if (deedFiles.length) {
+      titleDeedWizard = { files: deedFiles, pages: [], step: 0, data: null, activeType: null, activeIndex: null, recordType: "both" };
+      renderWizardStep0();
+    }
+  } catch (err) {}
+});
 
 /* ================= Batch import: split a mixed batch into 都更案件 first ================= */
 
@@ -1817,7 +2032,7 @@ document.getElementById("back-to-dashboard").addEventListener("click", goToDashb
 async function openProject(id) {
   state.currentProjectId = id;
   state.projectCache[id] = state.projectCache[id] || {};
-  setActiveNav("");
+  setActiveSidebarCase(id);
   showView("view-project-detail");
 
   try {
@@ -2881,6 +3096,59 @@ function showImageLightbox(base64, mime) {
   document.body.appendChild(overlay);
 }
 
+// Renders the left-hand column of scanned-page thumbnails for a single 地號/建號
+// record during review (see runGroupedTitleDeedOcr, which stamps `_sourcePages` onto
+// each record from the page group its OCR result came from), so the user can check the
+// extracted fields against the original scan without leaving the edit form. Records
+// from the single-batch (non-manual-grouping) OCR flow have no `_sourcePages` and
+// render nothing here - there's no real source image to show, and showing a "recover a
+// page" panel implies data that doesn't exist.
+function wizardSourceThumbsHtml(record) {
+  const pages = record._sourcePages;
+  if (!pages || !pages.length) return "";
+  return `
+    <div class="wizard-review-thumbs" id="wizard-review-thumbs">
+      ${pages
+        .map(
+          (p, i) =>
+            `<img src="data:${p.mime_type};base64,${p.image_base64}" data-thumb-index="${i}" title="點擊放大原始掃描頁">`
+        )
+        .join("")}
+    </div>`;
+}
+
+function wireWizardSourceThumbs(record) {
+  const wrap = document.getElementById("wizard-review-thumbs");
+  if (!wrap) return;
+  wrap.querySelectorAll("img[data-thumb-index]").forEach((img) => {
+    img.addEventListener("click", () => {
+      const p = record._sourcePages[Number(img.dataset.thumbIndex)];
+      showImageLightbox(p.image_base64, p.mime_type);
+    });
+  });
+}
+
+// Shared "☑ 已核對此筆資料" toggle shown under a record's edit form. The wizard has no
+// real OCR confidence score to show (the backend extraction doesn't return one), so
+// this tracks the one thing that's actually true: whether a human has looked at this
+// record against the original scan yet. Read by the unreviewed-count reminder on the
+// final confirm screen (see renderWizardStepConfirm).
+function wizardReviewedRowHtml(record) {
+  return `
+    <label class="wizard-reviewed-row">
+      <input type="checkbox" id="wizard-reviewed-checkbox" ${record.reviewed ? "checked" : ""}>
+      已核對此筆資料與原始掃描件相符
+    </label>`;
+}
+
+function wireWizardReviewedCheckbox(record) {
+  const cb = document.getElementById("wizard-reviewed-checkbox");
+  if (!cb) return;
+  cb.addEventListener("change", () => {
+    record.reviewed = cb.checked;
+  });
+}
+
 function wireThumbnailLightbox(container, pages) {
   container.querySelectorAll("img[data-page-index]").forEach((img) => {
     img.style.cursor = "zoom-in";
@@ -2978,6 +3246,15 @@ async function runGroupedTitleDeedOcr() {
         }
         if (result.job.error_message) failedGroups.push(groupNumber);
         const normalized = normalizeTitleDeedData(result.data);
+        const sourcePages = groupPages.map((p) => ({ image_base64: p.image_base64, mime_type: p.mime_type }));
+        normalized.parcels.forEach((p) => {
+          p._sourcePages = sourcePages;
+          p.reviewed = false;
+        });
+        normalized.buildings.forEach((b) => {
+          b._sourcePages = sourcePages;
+          b.reviewed = false;
+        });
         combined.parcels.push(...normalized.parcels);
         combined.buildings.push(...normalized.buildings);
         combined.encumbrances.push(...normalized.encumbrances);
@@ -3156,6 +3433,7 @@ function renderWizardStepParcelEditor() {
 function renderParcelDescriptionSubStep(idx) {
   const parcels = titleDeedWizard.data.parcels;
   const p = parcels[idx];
+  const thumbsHtml = wizardSourceThumbsHtml(p);
   openModal(
     "掃描謄本匯入",
     `
@@ -3163,25 +3441,34 @@ function renderParcelDescriptionSubStep(idx) {
     <div style="margin-bottom:10px">
       <button type="button" class="btn-secondary btn-sm" id="wizard-rescan-btn">重新上傳這一筆的謄本檔案並辨識</button>
     </div>
-    <form id="wizard-step-form" autocomplete="off">
-      <div class="field-row">
-        <div class="field"><label>鄉鎮市區</label><input name="township" value="${escapeHtml(p.township)}" autocomplete="off"></div>
-        <div class="field"><label>地段</label><input name="section" value="${escapeHtml(p.section)}" autocomplete="off"></div>
+    <div class="wizard-review-split">
+      ${thumbsHtml}
+      <div class="wizard-review-form">
+        <form id="wizard-step-form" autocomplete="off">
+          <div class="field-row">
+            <div class="field"><label>鄉鎮市區</label><input name="township" value="${escapeHtml(p.township)}" autocomplete="off"></div>
+            <div class="field"><label>地段</label><input name="section" value="${escapeHtml(p.section)}" autocomplete="off"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>小段</label><input name="subsection" value="${escapeHtml(p.subsection)}" autocomplete="off"></div>
+            <div class="field"><label>地號</label><input name="parcel_number" value="${escapeHtml(p.parcel_number)}" autocomplete="off"></div>
+          </div>
+          <div class="field"><label>土地面積(㎡)</label><input name="area_sqm" type="number" step="0.01" value="${escapeHtml(p.area_sqm)}" autocomplete="off"></div>
+        </form>
+        ${wizardReviewedRowHtml(p)}
       </div>
-      <div class="field-row">
-        <div class="field"><label>小段</label><input name="subsection" value="${escapeHtml(p.subsection)}" autocomplete="off"></div>
-        <div class="field"><label>地號</label><input name="parcel_number" value="${escapeHtml(p.parcel_number)}" autocomplete="off"></div>
-      </div>
-      <div class="field"><label>土地面積(㎡)</label><input name="area_sqm" type="number" step="0.01" value="${escapeHtml(p.area_sqm)}" autocomplete="off"></div>
-    </form>
+    </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-danger" id="wizard-delete-parcel-btn">刪除此筆</button>
       ${idx > 0 ? `<button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一筆</button>` : ""}
       <button type="button" class="btn-primary" id="wizard-next-item-btn">下一步:土地所有權部</button>
     </div>`,
-    { width: "620px" }
+    { width: thumbsHtml ? "860px" : "620px" }
   );
+
+  wireWizardSourceThumbs(p);
+  wireWizardReviewedCheckbox(p);
 
   document.getElementById("wizard-rescan-btn").addEventListener("click", () => {
     openWizardSingleRecordRescan("parcel", p, () => renderParcelDescriptionSubStep(idx));
@@ -3221,20 +3508,30 @@ function renderParcelDescriptionSubStep(idx) {
 function renderParcelOwnersSubStep(idx) {
   const parcels = titleDeedWizard.data.parcels;
   const p = parcels[idx];
+  const thumbsHtml = wizardSourceThumbsHtml(p);
   openModal(
     "掃描謄本匯入",
     `
     ${wizardProgressHtml(`地號編輯(第 ${idx + 1} / ${parcels.length} 筆) · 2/3 土地所有權部`)}
-    <div class="helper-text" style="margin-bottom:10px">${escapeHtml(parcelSummaryLabel(p))}</div>
-    <div id="wizard-land-owners" style="margin:6px 0"></div>
-    <button type="button" class="btn-secondary btn-sm" id="wizard-add-land-owner-btn">+ 新增共有人</button>
+    <div class="wizard-review-split">
+      ${thumbsHtml}
+      <div class="wizard-review-form">
+        <div class="helper-text" style="margin-bottom:10px">${escapeHtml(parcelSummaryLabel(p))}</div>
+        <div id="wizard-land-owners" style="margin:6px 0"></div>
+        <button type="button" class="btn-secondary btn-sm" id="wizard-add-land-owner-btn">+ 新增共有人</button>
+        ${wizardReviewedRowHtml(p)}
+      </div>
+    </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一步</button>
       <button type="button" class="btn-primary" id="wizard-next-item-btn">下一步:土地他項權利部</button>
     </div>`,
-    { width: "620px" }
+    { width: thumbsHtml ? "860px" : "620px" }
   );
+
+  wireWizardSourceThumbs(p);
+  wireWizardReviewedCheckbox(p);
 
   const areaSqm = Number(p.area_sqm) || null;
   renderOwnerRowsContainer("wizard-land-owners", p.owners, "lo", areaSqm);
@@ -3268,21 +3565,31 @@ function renderParcelEncumbrancesSubStep(idx) {
   const parcels = titleDeedWizard.data.parcels;
   const p = parcels[idx];
   const isLast = idx === parcels.length - 1;
+  const thumbsHtml = wizardSourceThumbsHtml(p);
   openModal(
     "掃描謄本匯入",
     `
     ${wizardProgressHtml(`地號編輯(第 ${idx + 1} / ${parcels.length} 筆) · 3/3 土地他項權利部`)}
-    <div class="helper-text" style="margin-bottom:10px">${escapeHtml(parcelSummaryLabel(p))}</div>
-    <div id="wizard-parcel-encumbrances" style="margin:6px 0"></div>
-    <button type="button" class="btn-secondary btn-sm" id="wizard-add-parcel-encumbrance-btn">+ 新增他項權利</button>
-    <div class="helper-text" style="margin-top:6px">若這筆地號沒有他項權利部,可直接略過。跨好幾筆地號的他項權利,留到最後「他項權利部」步驟處理即可</div>
+    <div class="wizard-review-split">
+      ${thumbsHtml}
+      <div class="wizard-review-form">
+        <div class="helper-text" style="margin-bottom:10px">${escapeHtml(parcelSummaryLabel(p))}</div>
+        <div id="wizard-parcel-encumbrances" style="margin:6px 0"></div>
+        <button type="button" class="btn-secondary btn-sm" id="wizard-add-parcel-encumbrance-btn">+ 新增他項權利</button>
+        <div class="helper-text" style="margin-top:6px">若這筆地號沒有他項權利部,可直接略過。跨好幾筆地號的他項權利,留到最後「他項權利部」步驟處理即可</div>
+        ${wizardReviewedRowHtml(p)}
+      </div>
+    </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一步</button>
       <button type="button" class="btn-primary" id="wizard-next-item-btn">${isLast ? "下一步" : "下一筆地號"}</button>
     </div>`,
-    { width: "620px" }
+    { width: thumbsHtml ? "860px" : "620px" }
   );
+
+  wireWizardSourceThumbs(p);
+  wireWizardReviewedCheckbox(p);
 
   renderEncumbranceRows("wizard-parcel-encumbrances", p.encumbrances);
 
@@ -3443,6 +3750,7 @@ function renderWizardStepBuildingEditor() {
 function renderBuildingDescriptionSubStep(idx) {
   const buildings = titleDeedWizard.data.buildings;
   const b = buildings[idx];
+  const thumbsHtml = wizardSourceThumbsHtml(b);
   openModal(
     "掃描謄本匯入",
     `
@@ -3450,29 +3758,38 @@ function renderBuildingDescriptionSubStep(idx) {
     <div style="margin-bottom:10px">
       <button type="button" class="btn-secondary btn-sm" id="wizard-rescan-btn">重新上傳這一筆的建物謄本檔案並辨識</button>
     </div>
-    <form id="wizard-step-form" autocomplete="off">
-      <div class="field-row">
-        <div class="field"><label>建號</label><input name="building_number" value="${escapeHtml(b.building_number)}" autocomplete="off"></div>
-        <div class="field"><label>建號門牌</label><input name="building_address" value="${escapeHtml(b.building_address)}" autocomplete="off"></div>
+    <div class="wizard-review-split">
+      ${thumbsHtml}
+      <div class="wizard-review-form">
+        <form id="wizard-step-form" autocomplete="off">
+          <div class="field-row">
+            <div class="field"><label>建號</label><input name="building_number" value="${escapeHtml(b.building_number)}" autocomplete="off"></div>
+            <div class="field"><label>建號門牌</label><input name="building_address" value="${escapeHtml(b.building_address)}" autocomplete="off"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>地號</label><input name="parcel_number" value="${escapeHtml(b.parcel_number)}" autocomplete="off"></div>
+            <div class="field"><label>層數</label><input name="total_floors" value="${escapeHtml(b.total_floors)}" autocomplete="off"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>層次</label><input name="floor" value="${escapeHtml(b.floor)}" autocomplete="off"></div>
+            <div class="field"><label>建物總面積(㎡)</label><input name="total_area_sqm" value="${escapeHtml(b.total_area_sqm)}" type="number" step="0.01" autocomplete="off"></div>
+          </div>
+          <div class="field"><label>層次面積(㎡)</label><input name="floor_area_sqm" value="${escapeHtml(b.floor_area_sqm)}" type="number" step="0.01" autocomplete="off"></div>
+        </form>
+        ${wizardReviewedRowHtml(b)}
       </div>
-      <div class="field-row">
-        <div class="field"><label>地號</label><input name="parcel_number" value="${escapeHtml(b.parcel_number)}" autocomplete="off"></div>
-        <div class="field"><label>層數</label><input name="total_floors" value="${escapeHtml(b.total_floors)}" autocomplete="off"></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label>層次</label><input name="floor" value="${escapeHtml(b.floor)}" autocomplete="off"></div>
-        <div class="field"><label>建物總面積(㎡)</label><input name="total_area_sqm" value="${escapeHtml(b.total_area_sqm)}" type="number" step="0.01" autocomplete="off"></div>
-      </div>
-      <div class="field"><label>層次面積(㎡)</label><input name="floor_area_sqm" value="${escapeHtml(b.floor_area_sqm)}" type="number" step="0.01" autocomplete="off"></div>
-    </form>
+    </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-danger" id="wizard-delete-building-btn">刪除此筆</button>
       ${idx > 0 ? `<button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一筆</button>` : ""}
       <button type="button" class="btn-primary" id="wizard-next-item-btn">下一步:建物所有權部</button>
     </div>`,
-    { width: "620px" }
+    { width: thumbsHtml ? "860px" : "620px" }
   );
+
+  wireWizardSourceThumbs(b);
+  wireWizardReviewedCheckbox(b);
 
   document.getElementById("wizard-rescan-btn").addEventListener("click", () => {
     openWizardSingleRecordRescan("building", b, () => renderBuildingDescriptionSubStep(idx));
@@ -3515,20 +3832,30 @@ function renderBuildingOwnersSubStep(idx) {
   const buildings = titleDeedWizard.data.buildings;
   const b = buildings[idx];
   const isLast = idx === buildings.length - 1;
+  const thumbsHtml = wizardSourceThumbsHtml(b);
   openModal(
     "掃描謄本匯入",
     `
     ${wizardProgressHtml(`建號編輯(第 ${idx + 1} / ${buildings.length} 筆) · 2/2 建物所有權部`)}
-    <div class="helper-text" style="margin-bottom:10px">${escapeHtml(buildingSummaryLabel(b))}</div>
-    <div id="wizard-building-owners" style="margin:6px 0"></div>
-    <button type="button" class="btn-secondary btn-sm" id="wizard-add-building-owner-btn">+ 新增共有人</button>
+    <div class="wizard-review-split">
+      ${thumbsHtml}
+      <div class="wizard-review-form">
+        <div class="helper-text" style="margin-bottom:10px">${escapeHtml(buildingSummaryLabel(b))}</div>
+        <div id="wizard-building-owners" style="margin:6px 0"></div>
+        <button type="button" class="btn-secondary btn-sm" id="wizard-add-building-owner-btn">+ 新增共有人</button>
+        ${wizardReviewedRowHtml(b)}
+      </div>
+    </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
       <button type="button" class="btn-secondary" id="wizard-prev-item-btn">上一步</button>
       <button type="button" class="btn-primary" id="wizard-next-item-btn">${isLast ? "下一步" : "下一筆建號"}</button>
     </div>`,
-    { width: "620px" }
+    { width: thumbsHtml ? "860px" : "620px" }
   );
+
+  wireWizardSourceThumbs(b);
+  wireWizardReviewedCheckbox(b);
 
   const areaSqm = Number(b.total_area_sqm) || Number(b.floor_area_sqm) || null;
   renderOwnerRowsContainer("wizard-building-owners", b.owners, "bo", areaSqm);
@@ -3608,11 +3935,48 @@ function renderWizardStepConfirm() {
         )
         .join("")}`
     : "";
+
+  // Real signal (did a human check this record's checkbox?), not a fabricated AI
+  // confidence score - see wizardReviewedRowHtml. Only counts records that actually
+  // went through a review sub-step with the checkbox rendered.
+  const unreviewedCount = [...d.parcels, ...d.buildings].filter((r) => !r.reviewed).length;
+  const unreviewedBannerHtml = unreviewedCount
+    ? `<div class="final-banner warning" style="margin-bottom:10px">⚠ 還有 ${unreviewedCount} 筆尚未勾選「已核對」,建議返回逐筆確認後再建立</div>`
+    : "";
+
+  // Land↔building relation preview: same matching rule the actual submit step uses
+  // (parcel_number match, see submitTitleDeedWizard) but computed here purely for
+  // display before anything is created, so the user can see which buildings will link
+  // to which parcel before committing.
+  const relationRowsHtml = d.parcels
+    .map((p) => {
+      const linkedBuildings = d.buildings.filter((b) => b.parcel_number && b.parcel_number === p.parcel_number);
+      if (!linkedBuildings.length) return "";
+      return `
+        <div class="wizard-relation-row">
+          <div class="wizard-relation-card">
+            <div class="wizard-relation-card-title">📍 地號 ${escapeHtml(p.parcel_number) || "-"}</div>
+            <div class="wizard-relation-card-sub">${escapeHtml(parcelSummaryLabel(p))}</div>
+          </div>
+          <div class="wizard-relation-arrow">→</div>
+          <div class="wizard-relation-card">
+            <div class="wizard-relation-card-title">🏢 建號 ${linkedBuildings.length} 筆</div>
+            <div class="wizard-relation-card-sub">${linkedBuildings.map((b) => escapeHtml(b.building_number) || "-").join("、")}</div>
+          </div>
+        </div>`;
+    })
+    .join("");
+  const relationSectionHtml = relationRowsHtml
+    ? `<div class="wizard-confirm-section-title">地號 → 建號 關聯預覽</div>${relationRowsHtml}`
+    : "";
+
   openModal(
     "掃描謄本匯入",
     `
     ${wizardProgressHtml("確認建立")}
     <div class="final-banner warning" style="margin-bottom:16px">⚠️ 建立前最後確認：以下姓名、地址、面積等內容為 AI 辨識結果，可能有誤或臆測，請務必逐筆對照原始掃描件</div>
+    ${unreviewedBannerHtml}
+    ${relationSectionHtml}
     <div class="wizard-confirm-section-title">土地地號(${d.parcels.length})</div>
     ${parcelsHtml}
     ${buildingsSectionHtml}
