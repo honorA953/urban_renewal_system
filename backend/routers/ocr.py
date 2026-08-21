@@ -76,6 +76,14 @@ def extract_title_deed_job(
     # already on the project, but the traceability archiving here didn't know that and
     # archived it again anyway, leaving a duplicate in 文件.
     source_document_ids: list[str] | None = Form(None),
+    # Swaps in a much slower but meaningfully more accurate local OCR engine (see
+    # _get_high_accuracy_ocr_engine in utils/ocr.py) - the wizard's per-record "重新上傳
+    # 這一筆...並辨識" button sets this, since that's the one place a user is
+    # deliberately re-scanning a single record they already suspect has a misread
+    # (e.g. a dropped surname character the default engine missed entirely). Left off
+    # for every other call site - a full batch import at this engine's per-page cost
+    # would take far too long.
+    high_accuracy: bool = Form(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_staff_or_admin),
 ):
@@ -141,7 +149,7 @@ def extract_title_deed_job(
         for doc in documents:
             with open(doc.file_path, "rb") as f:
                 file_payload.append((f.read(), doc.mime_type))
-        parsed, warning = extract_title_deed(file_payload, record_type=record_type)
+        parsed, warning = extract_title_deed(file_payload, record_type=record_type, high_accuracy=high_accuracy)
     except (OcrError, OSError) as exc:
         job.status = "failed"
         job.error_message = str(exc)

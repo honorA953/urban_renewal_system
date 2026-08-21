@@ -313,7 +313,9 @@ def downscale_for_preview(content: bytes, max_dimension: int = 1000, quality: in
     return buf.getvalue()
 
 
-def extract_title_deed(files: list[tuple[bytes, str | None]], record_type: str = "both") -> tuple[dict, str | None]:
+def extract_title_deed(
+    files: list[tuple[bytes, str | None]], record_type: str = "both", high_accuracy: bool = False
+) -> tuple[dict, str | None]:
     """OCRs 1+ scanned pages (in the given order) locally, then sends the recognized
     text to OpenAI and asks it to return the title-deed sections as structured JSON. The
     pages may be a single 地號/建號's title deed, or a batch covering many
@@ -341,7 +343,7 @@ def extract_title_deed(files: list[tuple[bytes, str | None]], record_type: str =
     failed_chunks = []
     for i, chunk in enumerate(chunks):
         try:
-            results.append(_extract_title_deed_chunk(chunk, record_type))
+            results.append(_extract_title_deed_chunk(chunk, record_type, high_accuracy))
         except OcrError as exc:
             failed_chunks.append((i, exc))
 
@@ -448,13 +450,50 @@ def _get_ocr_engine() -> RapidOCR:
     return _OCR_ENGINE
 
 
-def _ocr_page_text(content: bytes) -> str:
+# A second, much heavier OCR engine (the newer `rapidocr` package - not the same as the
+# `rapidocr_onnxruntime` used everywhere else in this file - a "server"-tier PP-OCRv5
+# model instead of the default's lighter one) reserved for on-demand single-record
+# re-scans (see extract_title_deed's high_accuracy param, wired to the wizard's "重新
+# 上傳這一筆...並辨識" button). A/B tested against a real misread ("所有權人：卓明" -
+# missing the surname character entirely) on real project data: this model correctly
+# read the full name where the default model, and even RapidOCR's own dedicated
+# Traditional Chinese model, both did not. The cost is real too, though - loading it the
+# first time plus a single page took roughly two minutes in that same test, ~50-100x the
+# default engine - much too slow to use for every page of every batch import, but
+# acceptable for the rare "just this one record, I already know something's wrong"
+# re-scan a user explicitly asks for.
+_HIGH_ACCURACY_OCR_ENGINE = None
+
+
+def _get_high_accuracy_ocr_engine():
+    global _HIGH_ACCURACY_OCR_ENGINE
+    if _HIGH_ACCURACY_OCR_ENGINE is None:
+        from rapidocr import RapidOCR as HighAccuracyRapidOCR
+        from rapidocr.utils.typings import LangRec, ModelType, OCRVersion
+
+        _HIGH_ACCURACY_OCR_ENGINE = HighAccuracyRapidOCR(
+            params={
+                "Rec.lang_type": LangRec.CH,
+                "Rec.ocr_version": OCRVersion.PPOCRV5,
+                "Rec.model_type": ModelType.SERVER,
+                "Global.use_cls": False,
+            }
+        )
+    return _HIGH_ACCURACY_OCR_ENGINE
+
+
+def _ocr_page_text(content: bytes, high_accuracy: bool = False) -> str:
     """Runs local OCR on one page image and returns its recognized text lines, one per
-    line, in the reading order RapidOCR detects them in. Garbled noise from these scans'
-    background security watermark sometimes gets picked up as spurious text lines -
-    that's left as-is for the downstream OpenAI call to recognize and ignore, rather
-    than trying to filter it heuristically here and risking real text getting dropped."""
+    line, in the reading order the engine detects them in. Garbled noise from these
+    scans' background security watermark sometimes gets picked up as spurious text
+    lines - that's left as-is for the downstream OpenAI call to recognize and ignore,
+    rather than trying to filter it heuristically here and risking real text getting
+    dropped. high_accuracy swaps in the much slower but more accurate engine - see
+    _get_high_accuracy_ocr_engine()."""
     img = Image.open(io.BytesIO(content)).convert("RGB")
+    if high_accuracy:
+        result = _get_high_accuracy_ocr_engine()(np.array(img)).txts
+        return _normalize_ocr_text("\n".join(result)) if result else ""
     result, _ = _get_ocr_engine()(np.array(img))
     return _normalize_ocr_text("\n".join(line[1] for line in result)) if result else ""
 
@@ -524,7 +563,7 @@ _RECORD_TYPE_INSTRUCTIONS = {
 }
 
 
-def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type: str = "both") -> dict:
+def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type: str = "both", high_accuracy: bool = False) -> dict:
     # Pages are OCR'd locally first (see _ocr_page_text) instead of sending the raw
     # images to a vision model - a dedicated OCR engine reads dense small print (parcel
     # numbers, ID numbers, ownership fractions) far more reliably than a vision LLM
@@ -537,9 +576,16 @@ def _extract_title_deed_chunk(files: list[tuple[bytes, str | None]], record_type
     # (see extract_building_group), and a multi-page group was paying for each page's
     # OCR one at a time instead of using the same thread-pool treatment already applied
     # everywhere else in this file.
+    #
+    # high_accuracy's engine (see _get_high_accuracy_ocr_engine) is ~50-100x slower per
+    # page than the default - capped at 2 concurrent workers instead of
+    # _HEADER_OCR_WORKERS regardless of core count, since that model's own internal
+    # compute already saturates a couple of cores by itself and this path is only ever a
+    # handful of pages (a single re-scanned record), not a full batch.
+    workers = 2 if high_accuracy else _HEADER_OCR_WORKERS
     if files:
-        with ThreadPoolExecutor(max_workers=min(_HEADER_OCR_WORKERS, len(files))) as pool:
-            page_texts = list(pool.map(lambda args: _ocr_page_text(args[0]), files))
+        with ThreadPoolExecutor(max_workers=min(workers, len(files))) as pool:
+            page_texts = list(pool.map(lambda args: _ocr_page_text(args[0], high_accuracy), files))
     else:
         page_texts = []
     # TEMP DEBUG - remove once the missing-encumbrances extraction issue is diagnosed.

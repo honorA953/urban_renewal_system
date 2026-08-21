@@ -2988,12 +2988,18 @@ function openWizardSingleRecordRescan(recordType, record, rerender) {
     const btn = document.getElementById("wizard-rescan-btn");
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "辨識中...";
+      // This one call uses a much slower but more accurate OCR engine (see
+      // high_accuracy on the backend's /ocr/title-deed) - single-record re-scans are
+      // rare enough, and the whole point is catching a misread the fast default engine
+      // already got wrong, that the extra wait is worth it here specifically. Real
+      // measurement: roughly 1-2 minutes for a short record, not seconds.
+      btn.textContent = "辨識中(這次用較慢但較準確的引擎,可能要 1~2 分鐘)...";
     }
     try {
       const fd = new FormData();
       Array.from(input.files).forEach((f) => fd.append("files", f));
       fd.append("record_type", recordType === "parcel" ? "land" : "building");
+      fd.append("high_accuracy", "true");
       const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
       const normalized = normalizeTitleDeedData(result.data);
       const list = recordType === "parcel" ? normalized.parcels : normalized.buildings;
