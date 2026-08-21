@@ -481,7 +481,10 @@ _OCR_ENGINE: RapidOCR | None = None
 def _get_ocr_engine() -> RapidOCR:
     global _OCR_ENGINE
     if _OCR_ENGINE is None:
-        _OCR_ENGINE = RapidOCR()
+        # Same use_cuda GPU acceleration as the high-accuracy engine below (auto-falls-
+        # back to CPU with a log warning if no CUDA device is available, so safe to leave
+        # on for a GPU-less deploy target like the NAS too).
+        _OCR_ENGINE = RapidOCR(det_use_cuda=True, cls_use_cuda=True, rec_use_cuda=True)
     return _OCR_ENGINE
 
 
@@ -559,7 +562,9 @@ _HEADER_OCR_ENGINE: RapidOCR | None = None
 def _get_header_ocr_engine() -> RapidOCR:
     global _HEADER_OCR_ENGINE
     if _HEADER_OCR_ENGINE is None:
-        _HEADER_OCR_ENGINE = RapidOCR(det_limit_side_len=256, use_cls=False)
+        _HEADER_OCR_ENGINE = RapidOCR(
+            det_limit_side_len=256, use_cls=False, det_use_cuda=True, rec_use_cuda=True
+        )
     return _HEADER_OCR_ENGINE
 
 
