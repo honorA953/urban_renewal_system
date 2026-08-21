@@ -2567,6 +2567,12 @@ function renderWizardStep0() {
     `
     ${recordTypeField}
     <div class="field">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="wizard-high-accuracy" style="width:auto" ${titleDeedWizard.highAccuracy !== false ? "checked" : ""}>
+        使用高準確度辨識(較慢,每頁約多花 1~2 分鐘,但明顯較少漏字/認錯字)
+      </label>
+    </div>
+    <div class="field">
       <label>選擇謄本圖片或 PDF(可多選;拍照多張時請依謄本頁面順序選取)</label>
       <input type="file" id="wizard-file-input" accept="image/*,application/pdf" multiple>
     </div>
@@ -2600,6 +2606,9 @@ function renderWizardStep0() {
       titleDeedWizard.recordType = e.target.value;
     });
   }
+  document.getElementById("wizard-high-accuracy").addEventListener("change", (e) => {
+    titleDeedWizard.highAccuracy = e.target.checked;
+  });
   document.getElementById("wizard-pick-document-btn").addEventListener("click", openWizardDocumentPicker);
   document.getElementById("wizard-start-ocr-btn").addEventListener("click", runTitleDeedOcr);
   document.getElementById("wizard-manual-group-btn").addEventListener("click", runTitleDeedSplitAndGroup);
@@ -2724,15 +2733,14 @@ async function runTitleDeedOcr() {
   }
   const btn = document.getElementById("wizard-start-ocr-btn");
   btn.disabled = true;
-  // Back to the fast default engine here (was briefly high_accuracy-by-default, but
-  // that meant every page cost ~70-80s regardless of whether it was actually needed -
-  // felt slow in practice for a step run this often). Character-level misreads (壹/臺,
-  // 羲/義 etc.) are now instead caught by EXTRACTION_PROMPT explicitly asking the model
-  // to cross-check/correct them using the other owners' addresses on the same document
-  // - cheaper and faster than swapping the whole OCR engine, since the OpenAI call
-  // happens either way. The slow engine is still available via "重新上傳這一筆...並
-  // 辨識" for a specific record the user already suspects is wrong.
-  btn.textContent = "辨識中...(請稍候，勿關閉視窗)";
+  // Whether to use the slow-but-accurate engine is now the user's own explicit choice
+  // (the checkbox on step 0), not a hardcoded default either way - prompt-based
+  // correction alone can't recover a character the fast engine's raw OCR text never
+  // captured in the first place (missing 鄰, missing 里 characters, whole records
+  // dropped entirely), so accuracy-sensitive imports need the better engine from the
+  // start, not patched after the fact.
+  const highAccuracy = titleDeedWizard.highAccuracy !== false;
+  btn.textContent = highAccuracy ? "辨識中...(使用較慢但較準確的引擎,請稍候，勿關閉視窗)" : "辨識中...(請稍候，勿關閉視窗)";
   const progress = startFakeProgress("wizard-ocr-progress-wrap", "wizard-ocr-progress-fill", "wizard-ocr-progress-label");
   try {
     const fd = new FormData();
@@ -2740,6 +2748,7 @@ async function runTitleDeedOcr() {
       fd.append("files", f);
       fd.append("source_document_ids", f.sourceDocumentId ? String(f.sourceDocumentId) : "");
     });
+    if (highAccuracy) fd.append("high_accuracy", "true");
     fd.append("record_type", titleDeedWizard.recordType);
     const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
 
@@ -2874,6 +2883,7 @@ async function runGroupedTitleDeedOcr() {
       const fd = new FormData();
       groupPages.forEach((p, i) => fd.append("files", base64ToBlob(p.image_base64, p.mime_type), `page-${p.page_number}.png`));
       fd.append("record_type", titleDeedWizard.recordType);
+      if (titleDeedWizard.highAccuracy !== false) fd.append("high_accuracy", "true");
 
       try {
         const result = await api(`/projects/${state.currentProjectId}/ocr/title-deed`, { method: "POST", body: fd, isForm: true });
